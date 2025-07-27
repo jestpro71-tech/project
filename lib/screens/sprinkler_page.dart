@@ -1,6 +1,6 @@
 import 'dart:async';
 import 'package:flutter/material.dart';
-import 'package:font_awesome_flutter/font_awesome_flutter.dart'; // <--- ตรวจสอบให้แน่ใจว่าบรรทัดนี้มีอยู่
+import 'package:font_awesome_flutter/font_awesome_flutter.dart';
 import 'package:cloud_firestore/cloud_firestore.dart'; // Import Firebase Firestore
 
 class SprinklerPage extends StatefulWidget {
@@ -26,20 +26,21 @@ class SprinklerPage extends StatefulWidget {
 class _SprinklerPageState extends State<SprinklerPage> {
   late bool sprinklerOn;
   late bool autoMode;
-  late List<Map<String, dynamic>> history;
+  List<Map<String, dynamic>> history = []; // เปลี่ยนเป็น List ธรรมดา เพราะจะดึงจาก Firestore
 
-  // สร้าง instance ของ Firestore
-  final FirebaseFirestore _firestore = FirebaseFirestore.instance;
+  final FirebaseFirestore _firestore = FirebaseFirestore.instance; // สร้าง instance ของ Firestore
 
   @override
   void initState() {
     super.initState();
     sprinklerOn = widget.initialSprinklerOn;
     autoMode = widget.initialAutoMode;
-    history = List<Map<String, dynamic>>.from(widget.initialHistory);
+    // ไม่ต้องใช้ initialHistory ตรงๆ แล้ว เพราะจะดึงจาก Firestore
 
     // เริ่มฟังการเปลี่ยนแปลงสถานะสปริงเกอร์จาก Firestore
     _listenToSprinklerStatus();
+    // เริ่มฟังการเปลี่ยนแปลงประวัติการทำงานสปริงเกอร์จาก Firestore
+    _listenToSprinklerHistory();
   }
 
   // ฟังก์ชันสำหรับฟังการเปลี่ยนแปลงสถานะสถานะสปริงเกอร์จาก Firestore
@@ -49,17 +50,36 @@ class _SprinklerPageState extends State<SprinklerPage> {
         final data = snapshot.data();
         if (data != null) {
           setState(() {
-            // อัปเดตสถานะ sprinklerOn ตามค่าจาก Firestore
             sprinklerOn = data['status'] == 'on';
-            autoMode = data['autoMode'] ?? false; // ดึงค่า autoMode ด้วย
+            autoMode = data['autoMode'] ?? false;
           });
         }
       }
     }, onError: (error) {
       print("Error listening to sprinkler status: $error");
-      // แสดงข้อความแจ้งเตือนผู้ใช้หากเกิดข้อผิดพลาดในการเชื่อมต่อ
       ScaffoldMessenger.of(context).showSnackBar(
         SnackBar(content: Text('เกิดข้อผิดพลาดในการเชื่อมต่อกับ Firebase: $error')),
+      );
+    });
+  }
+
+  // ฟังก์ชันสำหรับฟังการเปลี่ยนแปลงประวัติการทำงานสปริงเกอร์จาก Firestore
+  void _listenToSprinklerHistory() {
+    _firestore
+        .collection('devices')
+        .doc('sprinkler')
+        .collection('history') // เข้าถึง subcollection 'history'
+        .orderBy('timestamp', descending: true) // เรียงลำดับตามเวลาล่าสุด
+        .limit(10) // จำกัดจำนวนประวัติที่แสดง
+        .snapshots()
+        .listen((snapshot) {
+      setState(() {
+        history = snapshot.docs.map((doc) => doc.data()).toList();
+      });
+    }, onError: (error) {
+      print("Error listening to sprinkler history: $error");
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(content: Text('เกิดข้อผิดพลาดในการโหลดประวัติสปริงเกอร์: $error')),
       );
     });
   }
@@ -68,21 +88,20 @@ class _SprinklerPageState extends State<SprinklerPage> {
   Future<void> toggleSprinkler(bool value) async {
     setState(() {
       sprinklerOn = value;
-      if (sprinklerOn && autoMode) {
-        autoMode = false; // ถ้าเปิดเองด้วยมือ ให้ปิดโหมดอัตโนมัติ
+      if (sprinklerOn && autoMode) { // แก้ไขจาก pumpOn เป็น sprinklerOn
+        autoMode = false;
       }
     });
 
     try {
-      // อัปเดตสถานะใน Firestore
       await _firestore.collection('devices').doc('sprinkler').set({
         'status': value ? 'on' : 'off',
-        'autoMode': autoMode, // อัปเดต autoMode ด้วย
-        'lastUpdated': FieldValue.serverTimestamp(), // บันทึกเวลาที่อัปเดต
-      }, SetOptions(merge: true)); // ใช้ merge เพื่อไม่ให้เขียนทับ field อื่นๆ
+        'autoMode': autoMode,
+        'lastUpdated': FieldValue.serverTimestamp(),
+      }, SetOptions(merge: true));
 
       if (value) {
-        _addHistory('Manual'); // เพิ่มประวัติเมื่อเปิดด้วยมือ
+        _addHistory('Manual');
       }
       ScaffoldMessenger.of(context).showSnackBar(
         SnackBar(content: Text('สปริงเกอร์ถูก ${value ? "เปิด" : "ปิด"} แล้ว')),
@@ -92,7 +111,6 @@ class _SprinklerPageState extends State<SprinklerPage> {
       ScaffoldMessenger.of(context).showSnackBar(
         SnackBar(content: Text('ไม่สามารถอัปเดตสถานะสปริงเกอร์ได้: $e')),
       );
-      // ย้อนสถานะกลับหากเกิดข้อผิดพลาดในการอัปเดต Firebase
       setState(() {
         sprinklerOn = !value;
       });
@@ -104,20 +122,19 @@ class _SprinklerPageState extends State<SprinklerPage> {
     setState(() {
       autoMode = !autoMode;
       if (autoMode && sprinklerOn) {
-        sprinklerOn = false; // ถ้าเข้าโหมดอัตโนมัติ ให้ปิดการทำงานด้วยมือ
+        sprinklerOn = false;
       }
     });
 
     try {
-      // อัปเดตโหมดอัตโนมัติใน Firestore
       await _firestore.collection('devices').doc('sprinkler').set({
         'autoMode': autoMode,
-        'status': sprinklerOn ? 'on' : 'off', // อัปเดต status ด้วย
+        'status': sprinklerOn ? 'on' : 'off',
         'lastUpdated': FieldValue.serverTimestamp(),
       }, SetOptions(merge: true));
 
       if (autoMode) {
-        _addHistory('Auto'); // เพิ่มประวัติเมื่อเข้าโหมดอัตโนมัติ
+        _addHistory('Auto');
       }
       ScaffoldMessenger.of(context).showSnackBar(
         SnackBar(content: Text('โหมดอัตโนมัติถูก ${autoMode ? "เปิด" : "ปิด"} แล้ว')),
@@ -127,44 +144,68 @@ class _SprinklerPageState extends State<SprinklerPage> {
       ScaffoldMessenger.of(context).showSnackBar(
         SnackBar(content: Text('ไม่สามารถอัปเดตโหมดอัตโนมัติได้: $e')),
       );
-      // ย้อนสถานะกลับหากเกิดข้อผิดพลาดในการอัปเดต Firebase
       setState(() {
         autoMode = !autoMode;
       });
     }
   }
 
-  void _addHistory(String mode) {
+  // ฟังก์ชันสำหรับเพิ่มประวัติการทำงานลง Firestore
+  Future<void> _addHistory(String mode) async {
     final now = DateTime.now();
-    history.insert(0, {
+    final item = {
       'tray': mode == 'Auto' ? 'ถาด 1,2,3' : 'Manual',
       'time': '${now.hour}:${now.minute.toString().padLeft(2, '0')} น. ($mode)',
-    });
-    if (history.length > 10) history.removeLast();
-    widget.onUpdateHistory(history);
+      'timestamp': FieldValue.serverTimestamp(), // เพิ่ม timestamp สำหรับการเรียงลำดับ
+    };
+
+    try {
+      await _firestore.collection('devices').doc('sprinkler').collection('history').add(item);
+      // ไม่ต้อง setState history ตรงๆ แล้ว เพราะ _listenToSprinklerHistory จะอัปเดตให้เอง
+      // ไม่ต้องเรียก widget.onUpdateHistory(history) แล้ว เพราะข้อมูลจะถูกดึงจาก Firestore โดยตรง
+    } catch (e) {
+      print("Error adding history to Firestore: $e");
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(content: Text('ไม่สามารถบันทึกประวัติได้: $e')),
+      );
+    }
   }
 
+  // ฟังก์ชันสำหรับล้างประวัติการทำงานใน Firestore
   void _clearHistory() {
     showDialog(
       context: context,
       builder: (context) => AlertDialog(
-        title: const Text('ล้างประวัติ'),
+        title: const Text('ล้างประวัติ', style: TextStyle(fontFamily: 'Prompt')),
         content: const Text(
           'ต้องการล้างประวัติการทำงานสปริงเกอร์ทั้งหมดหรือไม่?',
+          style: TextStyle(fontFamily: 'Prompt'),
         ),
         actions: [
           TextButton(
-            child: const Text('ยกเลิก'),
+            child: const Text('ยกเลิก', style: TextStyle(fontFamily: 'Prompt')),
             onPressed: () => Navigator.pop(context),
           ),
           TextButton(
-            child: const Text('ล้าง', style: TextStyle(color: Colors.red)),
-            onPressed: () {
-              setState(() {
-                history.clear();
-                widget.onUpdateHistory(history);
-              });
-              Navigator.pop(context);
+            child: const Text('ล้าง', style: TextStyle(color: Colors.red, fontFamily: 'Prompt')),
+            onPressed: () async {
+              try {
+                // ลบเอกสารทั้งหมดใน subcollection 'history'
+                final historySnapshot = await _firestore.collection('devices').doc('sprinkler').collection('history').get();
+                for (DocumentSnapshot doc in historySnapshot.docs) {
+                  await doc.reference.delete();
+                }
+                ScaffoldMessenger.of(context).showSnackBar(
+                  const SnackBar(content: Text('ล้างประวัติเรียบร้อยแล้ว')),
+                );
+              } catch (e) {
+                print("Error clearing history from Firestore: $e");
+                ScaffoldMessenger.of(context).showSnackBar(
+                  SnackBar(content: Text('ไม่สามารถล้างประวัติได้: $e')),
+                );
+              } finally {
+                Navigator.pop(context);
+              }
             },
           ),
         ],
@@ -360,7 +401,7 @@ class _SprinklerPageState extends State<SprinklerPage> {
                         final item = history[index];
                         return ListTile(
                           leading: Icon(
-                            FontAwesomeIcons.droplet, // เปลี่ยนจาก solidDroplet เป็น droplet
+                            FontAwesomeIcons.droplet,
                             color: Colors.orange.shade700,
                           ),
                           title: Text(

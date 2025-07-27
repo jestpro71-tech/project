@@ -1,13 +1,11 @@
-import 'package:flutter/material.dart';
-import 'package:endproject/screens/pump_detail_page.dart';
-import 'package:endproject/screens/sprinkler_detail_page.dart';
-import 'package:endproject/screens/sensor_detail_page.dart';
+import 'package:flutter/material.dart';// Keep for individual sensor page
+import 'package:endproject/screens/sensor_list_page.dart'; // New: Import SensorListPage
 import 'package:font_awesome_flutter/font_awesome_flutter.dart'; // Import Font Awesome
 
 // หน้าแสดงอัตราการใช้ไฟฟ้าหลัก
 class PowerUsagePage extends StatelessWidget {
   final double fontSize;
-  final List<Map<String, dynamic>> sensors;
+  final List<Map<String, dynamic>> sensors; // This list contains ALL devices passed from DashboardScreen
 
   const PowerUsagePage({
     super.key,
@@ -17,49 +15,41 @@ class PowerUsagePage extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    final List<Map<String, dynamic>> devices = [
-      {
-        'name': 'ปั๊มน้ำ',
-        'power': 50.0,
-        'icon': FontAwesomeIcons.water, // Changed to FontAwesomeIcons.water
-        'color': Colors.blue,
-        'lastUsed': '09:45 น.',
-        'usageCountToday': 3,
-        'detailPage': () => const PumpDetailPage(), // ใช้ const
-      },
-      {
-        'name': 'สปริงเกอร์',
-        'power': 30.0,
-        'icon': FontAwesomeIcons.seedling, // Changed to FontAwesomeIcons.seedling
-        'color': Colors.orange,
-        'lastUsed': '07:30 น.',
-        'usageCountToday': 2,
-        'detailPage': () => const SprinklerDetailPage(), // ใช้ const
-      },
+    // Filter out 'ปั๊มน้ำ' and 'สปริงเกอร์' to get only actual sensors
+    final List<Map<String, dynamic>> actualSensors = sensors.where((device) {
+      final name = device['name'] as String;
+      return name.contains('เซนเซอร์'); // Only include items with 'เซนเซอร์' in their name
+    }).toList();
+
+    // Define core devices (pump, sprinkler) to be displayed separately
+    final List<Map<String, dynamic>> coreDevices = sensors.where((device) {
+      final name = device['name'] as String;
+      return name == 'ปั๊มน้ำ' || name == 'สปริงเกอร์';
+    }).toList();
+
+    // Calculate total power for all actual sensors
+    double totalSensorPower = actualSensors.fold(0.0, (sum, sensor) => sum + ((sensor['watt'] as num?)?.toDouble() ?? 0.0));
+
+    // Create the aggregated "เซ็นเซอร์รวม" card data
+    final Map<String, dynamic> combinedSensorCard = {
+      'name': 'เซ็นเซอร์รวม',
+      'power': totalSensorPower, // Sum of all actual sensor powers
+      'icon': FontAwesomeIcons.microchip, // A suitable icon for combined sensors
+      'color': Colors.teal, // A distinct color for sensors
+      'lastUsed': '-', // Placeholder, as it's a combined card
+      'usageCountToday': actualSensors.length, // Number of actual sensors
+      'detailPage': () => SensorListPage(sensors: actualSensors, fontSize: fontSize), // Pass ONLY actual sensors
+    };
+
+    // Combine core devices and the new combined sensor card for display
+    final List<Map<String, dynamic>> allDisplayDevices = [
+      ...coreDevices, // Pump and Sprinkler are here
+      combinedSensorCard, // The combined sensor card is here
     ];
 
-    // สร้างรายการอุปกรณ์ทั้งหมดรวมเซ็นเซอร์
-    final List<Map<String, dynamic>> allDevices = [
-      ...devices,
-      ...sensors.map(
-        (sensor) => {
-          'name': sensor['name'],
-          // แก้ไขตรงนี้: ตรวจสอบว่า 'watt' ไม่เป็น null ก่อนแปลงเป็น double
-          // ถ้าเป็น null ให้ใช้ 0.0 เป็นค่าเริ่มต้น
-          'power': (sensor['watt'] as num?)?.toDouble() ?? 0.0,
-          'icon': FontAwesomeIcons.droplet, // Changed to FontAwesomeIcons.droplet
-          'color': Colors.teal,
-          'lastUsed': '-',
-          'usageCountToday': 0,
-          'detailPage': () => SensorDetailPage(sensor: sensor),
-        },
-      ),
-    ];
-
-    // คำนวณพลังงานรวม
-    // แก้ไขตรงนี้: ตรวจสอบว่า 'power' ใน device ไม่เป็น null ก่อนบวก
-    double totalPower = allDevices.fold(
-      0.0, // เริ่มต้นด้วย 0.0 เพื่อให้แน่ใจว่าเป็น double
+    // Calculate overall total power for the top summary card
+    double overallTotalPower = allDisplayDevices.fold(
+      0.0,
       (sum, d) => sum + ((d['power'] as num?)?.toDouble() ?? 0.0),
     );
 
@@ -67,7 +57,11 @@ class PowerUsagePage extends StatelessWidget {
       appBar: AppBar(
         title: Text(
           'อัตราการใช้ไฟฟ้า',
-          style: TextStyle(fontSize: fontSize + 4, fontWeight: FontWeight.bold),
+          style: TextStyle(
+            fontSize: fontSize + 4,
+            fontWeight: FontWeight.bold,
+            fontFamily: 'Prompt', // Apply Prompt font
+          ),
         ),
         backgroundColor: Colors.teal.shade700,
         centerTitle: true,
@@ -84,15 +78,16 @@ class PowerUsagePage extends StatelessWidget {
               ),
               child: Row(
                 children: [
-                  Icon(FontAwesomeIcons.bolt, color: Colors.orange.shade800, size: 28), // Changed to FontAwesomeIcons.bolt
+                  Icon(FontAwesomeIcons.bolt, color: Colors.orange.shade800, size: 28),
                   const SizedBox(width: 10),
                   Expanded(
                     child: Text(
-                      'รวมการใช้พลังงาน: ${totalPower.toStringAsFixed(1)} วัตต์',
+                      'รวมการใช้พลังงาน: ${overallTotalPower.toStringAsFixed(1)} วัตต์',
                       style: TextStyle(
                         fontSize: fontSize + 3,
                         fontWeight: FontWeight.bold,
                         color: Colors.orange.shade800,
+                        fontFamily: 'Prompt', // Apply Prompt font
                       ),
                     ),
                   ),
@@ -102,14 +97,14 @@ class PowerUsagePage extends StatelessWidget {
             const SizedBox(height: 20),
             Expanded(
               child: ListView.separated(
-                itemCount: allDevices.length,
+                itemCount: allDisplayDevices.length,
                 separatorBuilder: (_, __) => const SizedBox(height: 16),
                 itemBuilder: (context, index) {
-                  final device = allDevices[index];
-                  // แก้ไขตรงนี้: ตรวจสอบว่า 'power' ไม่เป็น null ก่อนใช้งาน
+                  final device = allDisplayDevices[index];
                   final double power = (device['power'] as num?)?.toDouble() ?? 0.0;
-                  final Color color = device['color'];
-                  final double percent = totalPower > 0 ? power / totalPower : 0.0; // ป้องกันหารด้วยศูนย์
+                  // แก้ไขตรงนี้: เพิ่มการตรวจสอบ null และกำหนดสีเริ่มต้น (Colors.grey) หาก device['color'] เป็น null
+                  final Color color = (device['color'] as Color?) ?? Colors.grey;
+                  final double percent = overallTotalPower > 0 ? power / overallTotalPower : 0.0;
 
                   return Card(
                     elevation: 8,
@@ -133,6 +128,7 @@ class PowerUsagePage extends StatelessWidget {
                           fontSize: fontSize + 2,
                           fontWeight: FontWeight.w600,
                           color: Colors.black87,
+                          fontFamily: 'Prompt', // Apply Prompt font
                         ),
                       ),
                       subtitle: Column(
@@ -154,6 +150,7 @@ class PowerUsagePage extends StatelessWidget {
                             style: TextStyle(
                               fontSize: fontSize - 1,
                               color: Colors.grey[700],
+                              fontFamily: 'Prompt', // Apply Prompt font
                             ),
                           ),
                         ],
@@ -164,6 +161,7 @@ class PowerUsagePage extends StatelessWidget {
                           fontSize: fontSize + 1,
                           fontWeight: FontWeight.bold,
                           color: color.withOpacity(0.8),
+                          fontFamily: 'Prompt', // Apply Prompt font
                         ),
                       ),
                       onTap: () {

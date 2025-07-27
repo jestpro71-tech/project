@@ -10,8 +10,11 @@ import 'package:endproject/screens/gps_page.dart';
 import 'package:endproject/screens/soil_detail_page.dart';
 import 'package:endproject/screens/power_usage_page.dart';
 import 'package:endproject/widgets/modern_card.dart';
-import 'package:font_awesome_flutter/font_awesome_flutter.dart'; // Import Font Awesome
-// import 'package:endproject/utils/color_extensions.dart'; // สำหรับ ColorBrightness extension - ลบบรรทัดนี้ออกเนื่องจากไม่ได้ใช้โดยตรงในไฟล์นี้
+import 'package:font_awesome_flutter/font_awesome_flutter.dart'; // เพิ่ม import FontAwesomeIcons
+import 'package:endproject/screens/pump_detail_page.dart'; // Import PumpDetailPage
+import 'package:endproject/screens/sprinkler_detail_page.dart'; // Import SprinklerDetailPage
+import 'package:endproject/screens/sensor_detail_page.dart'; // Import SensorDetailPage (for individual sensors)
+
 
 // กำหนด URL ของ ESP32 เป็นค่าคงที่
 const String esp32Url = 'http://192.168.1.100';
@@ -422,12 +425,62 @@ class _DashboardScreenState extends State<DashboardScreen> {
                         MaterialPageRoute(
                           builder: (_) => PowerUsagePage(
                             fontSize: fontSize,
-                            sensors: const [
-                              {'name': 'ปั๊มน้ำ', 'watt': 12.5},
-                              {'name': 'สปริงเกอร์', 'watt': 8.3},
-                              {'name': 'เซนเซอร์ 1', 'watt': 0.3},
-                              {'name': 'เซนเซอร์ 2', 'watt': 0.3},
-                              {'name': 'เซนเซอร์ 3', 'watt': 0.3},
+                            sensors: [ // เปลี่ยนเป็น List ที่สามารถแก้ไขได้
+                              // ข้อมูลปั๊มน้ำ
+                              {
+                                'name': 'ปั๊มน้ำ',
+                                'watt': 12.5,
+                                'color': Colors.blue,
+                                'lastUsed': '09:45 น.',
+                                'usageCountToday': 3,
+                                'icon': FontAwesomeIcons.water,
+                                // เพิ่ม detailPage สำหรับปั๊มน้ำ
+                                'detailPage': () => const PumpDetailPage(),
+                              },
+                              // ข้อมูลสปริงเกอร์
+                              {
+                                'name': 'สปริงเกอร์',
+                                'watt': 8.3,
+                                'color': Colors.orange,
+                                'lastUsed': '07:30 น.',
+                                'usageCountToday': 2,
+                                'icon': FontAwesomeIcons.seedling,
+                                // เพิ่ม detailPage สำหรับสปริงเกอร์
+                                'detailPage': () => const SprinklerDetailPage(),
+                              },
+                              // ข้อมูลเซ็นเซอร์ 1
+                              {
+                                'name': 'เซนเซอร์ 1',
+                                'watt': 0.3,
+                                'color': Colors.teal,
+                                'lastUsed': '-',
+                                'usageCountToday': 0,
+                                'icon': FontAwesomeIcons.droplet,
+                                // เพิ่ม detailPage สำหรับเซ็นเซอร์ 1
+                                'detailPage': () => const SensorDetailPage(sensor: {'name': 'เซนเซอร์ 1', 'watt': 0.3, 'value': 50.0}),
+                              },
+                              // ข้อมูลเซ็นเซอร์ 2
+                              {
+                                'name': 'เซนเซอร์ 2',
+                                'watt': 0.3,
+                                'color': Colors.teal,
+                                'lastUsed': '-',
+                                'usageCountToday': 0,
+                                'icon': FontAwesomeIcons.droplet,
+                                // เพิ่ม detailPage สำหรับเซ็นเซอร์ 2
+                                'detailPage': () => const SensorDetailPage(sensor: {'name': 'เซนเซอร์ 2', 'watt': 0.3, 'value': 60.0}),
+                              },
+                              // ข้อมูลเซ็นเซอร์ 3
+                              {
+                                'name': 'เซนเซอร์ 3',
+                                'watt': 0.3,
+                                'color': Colors.teal,
+                                'lastUsed': '-',
+                                'usageCountToday': 0,
+                                'icon': FontAwesomeIcons.droplet,
+                                // เพิ่ม detailPage สำหรับเซ็นเซอร์ 3
+                                'detailPage': () => const SensorDetailPage(sensor: {'name': 'เซนเซอร์ 3', 'watt': 0.3, 'value': 70.0}),
+                              },
                             ],
                           ),
                         ),
@@ -450,7 +503,7 @@ class _DashboardScreenState extends State<DashboardScreen> {
                       Navigator.push(
                         context,
                         MaterialPageRoute(
-                          builder: (_) => GPSPage(position: gpsPosition),
+                          builder: (_) => GPSPage(position: gpsPosition, fontSize: fontSize),
                         ),
                       );
                     },
@@ -465,7 +518,4 @@ class _DashboardScreenState extends State<DashboardScreen> {
       ),
     );
   }
-
-  // Widget buildDashboardCard ถูกย้ายไปที่ widgets/dashboard_card.dart
-  // Widget buildModernCard ถูกย้ายไปที่ widgets/modern_card.dart
 }
