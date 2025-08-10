@@ -15,7 +15,6 @@ import 'package:endproject/screens/pump_detail_page.dart'; // Import PumpDetailP
 import 'package:endproject/screens/sprinkler_detail_page.dart'; // Import SprinklerDetailPage
 import 'package:endproject/screens/sensor_detail_page.dart'; // Import SensorDetailPage (for individual sensors)
 
-
 // กำหนด URL ของ ESP32 เป็นค่าคงที่
 const String esp32Url = 'http://192.168.1.100';
 
@@ -346,17 +345,8 @@ class _DashboardScreenState extends State<DashboardScreen> {
                         context,
                         MaterialPageRoute(
                           builder: (_) => PumpPage(
-                            initialPumpOn: pumpOn,
-                            initialAuto: pumpAuto,
-                            initialWaterLevel: waterLevel,
-                            initialWaterHistory: waterHistory,
-                            fontSize: fontSize,
-                            onUpdateWaterHistory: (history) {
-                              // Callback ที่จะถูกเรียกเมื่อมีการอัปเดตประวัติใน PumpPage
-                              setState(() {
-                                waterHistory = history;
-                              });
-                            },
+                            // ไม่ต้องส่งค่า initial... อีกต่อไป
+                            fontSize: 16.0,
                           ),
                         ),
                       );
@@ -425,7 +415,8 @@ class _DashboardScreenState extends State<DashboardScreen> {
                         MaterialPageRoute(
                           builder: (_) => PowerUsagePage(
                             fontSize: fontSize,
-                            sensors: [ // เปลี่ยนเป็น List ที่สามารถแก้ไขได้
+                            sensors: [
+                              // เปลี่ยนเป็น List ที่สามารถแก้ไขได้
                               // ข้อมูลปั๊มน้ำ
                               {
                                 'name': 'ปั๊มน้ำ',
@@ -457,7 +448,13 @@ class _DashboardScreenState extends State<DashboardScreen> {
                                 'usageCountToday': 0,
                                 'icon': FontAwesomeIcons.droplet,
                                 // เพิ่ม detailPage สำหรับเซ็นเซอร์ 1
-                                'detailPage': () => const SensorDetailPage(sensor: {'name': 'เซนเซอร์ 1', 'watt': 0.3, 'value': 50.0}),
+                                'detailPage': () => const SensorDetailPage(
+                                  sensor: {
+                                    'name': 'เซนเซอร์ 1',
+                                    'watt': 0.3,
+                                    'value': 50.0,
+                                  },
+                                ),
                               },
                               // ข้อมูลเซ็นเซอร์ 2
                               {
@@ -468,7 +465,13 @@ class _DashboardScreenState extends State<DashboardScreen> {
                                 'usageCountToday': 0,
                                 'icon': FontAwesomeIcons.droplet,
                                 // เพิ่ม detailPage สำหรับเซ็นเซอร์ 2
-                                'detailPage': () => const SensorDetailPage(sensor: {'name': 'เซนเซอร์ 2', 'watt': 0.3, 'value': 60.0}),
+                                'detailPage': () => const SensorDetailPage(
+                                  sensor: {
+                                    'name': 'เซนเซอร์ 2',
+                                    'watt': 0.3,
+                                    'value': 60.0,
+                                  },
+                                ),
                               },
                               // ข้อมูลเซ็นเซอร์ 3
                               {
@@ -479,7 +482,13 @@ class _DashboardScreenState extends State<DashboardScreen> {
                                 'usageCountToday': 0,
                                 'icon': FontAwesomeIcons.droplet,
                                 // เพิ่ม detailPage สำหรับเซ็นเซอร์ 3
-                                'detailPage': () => const SensorDetailPage(sensor: {'name': 'เซนเซอร์ 3', 'watt': 0.3, 'value': 70.0}),
+                                'detailPage': () => const SensorDetailPage(
+                                  sensor: {
+                                    'name': 'เซนเซอร์ 3',
+                                    'watt': 0.3,
+                                    'value': 70.0,
+                                  },
+                                ),
                               },
                             ],
                           ),
@@ -503,7 +512,10 @@ class _DashboardScreenState extends State<DashboardScreen> {
                       Navigator.push(
                         context,
                         MaterialPageRoute(
-                          builder: (_) => GPSPage(position: gpsPosition, fontSize: fontSize),
+                          builder: (_) => GPSPage(
+                            position: gpsPosition,
+                            fontSize: fontSize,
+                          ),
                         ),
                       );
                     },

@@ -1,28 +1,15 @@
 import 'dart:async';
 import 'package:flutter/material.dart';
-import 'package:font_awesome_flutter/font_awesome_flutter.dart'; // Import Font Awesome
-import 'package:cloud_firestore/cloud_firestore.dart'; // Import Firebase Firestore
+import 'package:font_awesome_flutter/font_awesome_flutter.dart';
+import 'package:cloud_firestore/cloud_firestore.dart';
+import 'package:firebase_database/firebase_database.dart';
 
 class PumpPage extends StatefulWidget {
-  final bool initialPumpOn;
-  final bool initialAuto;
-  final double initialWaterLevel;
-  final List<Map<String, String>> initialWaterHistory;
   final double fontSize;
-  final ValueChanged<List<Map<String, String>>> onUpdateWaterHistory;
-
-  // เพิ่มรับ Stream<double> สำหรับรับค่าระดับน้ำจากภายนอก
-  final Stream<double>? waterLevelStream;
 
   const PumpPage({
     super.key,
-    required this.initialPumpOn,
-    required this.initialAuto,
-    required this.initialWaterLevel,
-    required this.initialWaterHistory,
-    required this.fontSize,
-    required this.onUpdateWaterHistory,
-    this.waterLevelStream,
+    this.fontSize = 16.0, // กำหนดค่าเริ่มต้นเพื่อให้โค้ดนี้รันได้เลย
   });
 
   @override
@@ -30,73 +17,71 @@ class PumpPage extends StatefulWidget {
 }
 
 class _PumpPageState extends State<PumpPage> {
-  late bool pumpOn;
-  late bool auto;
-  late double waterLevel;
-  List<Map<String, dynamic>> waterHistory = []; // เปลี่ยนเป็น List ธรรมดา เพราะจะดึงจาก Firestore
+  // ค่าสถานะเริ่มต้น
+  bool pumpOn = false;
+  bool auto = false;
+  double waterLevel = 0.0;
+  List<Map<String, dynamic>> waterHistory = [];
 
-  // สร้าง instance ของ Firestore
+  // สร้าง instance ของ Firebase
   final FirebaseFirestore _firestore = FirebaseFirestore.instance;
-  StreamSubscription<double>? _waterLevelSubscription; // <--- เพิ่มการประกาศตัวแปรนี้
+  final _database = FirebaseDatabase.instance;
+
+  // Stream Subscriptions
+  StreamSubscription<DatabaseEvent>? _waterLevelSubscription;
+  StreamSubscription<DocumentSnapshot<Map<String, dynamic>>>? _pumpStatusSubscription;
+  StreamSubscription<QuerySnapshot<Map<String, dynamic>>>? _waterHistorySubscription;
 
   @override
   void initState() {
     super.initState();
-    pumpOn = widget.initialPumpOn;
-    auto = widget.initialAuto;
-    waterLevel = widget.initialWaterLevel;
-    // ไม่ต้องใช้ initialWaterHistory ตรงๆ แล้ว เพราะจะดึงจาก Firestore
-
-    // เริ่มฟังการเปลี่ยนแปลงสถานะปั๊มน้ำจาก Firestore
+    // เริ่มฟังการเปลี่ยนแปลงข้อมูลจาก Firebase ทั้งหมด
     _listenToPumpStatus();
-    // เริ่มฟังการเปลี่ยนแปลงประวัติการเติมน้ำจาก Firestore
     _listenToWaterHistory();
-
-    // subscribe stream water level ถ้ามี
-    if (widget.waterLevelStream != null) {
-      _waterLevelSubscription = widget.waterLevelStream!.listen((level) {
-        setState(() {
-          waterLevel = level;
-        });
-      });
-    }
+    _listenToWaterLevel();
   }
 
   @override
   void dispose() {
+    // ยกเลิกการฟัง Stream ทั้งหมดเมื่อ Widget ถูกทำลาย
+    _pumpStatusSubscription?.cancel();
+    _waterHistorySubscription?.cancel();
     _waterLevelSubscription?.cancel();
     super.dispose();
   }
 
-  // ฟังก์ชันสำหรับฟังการเปลี่ยนแปลงสถานะปั๊มน้ำจาก Firestore
+  // MARK: - Firebase Listeners
+
   void _listenToPumpStatus() {
-    _firestore.collection('devices').doc('pump').snapshots().listen((snapshot) {
+    _pumpStatusSubscription = _firestore
+        .collection('devices')
+        .doc('pump')
+        .snapshots()
+        .listen((snapshot) {
       if (snapshot.exists) {
         final data = snapshot.data();
         if (data != null) {
           setState(() {
-            // อัปเดตสถานะ pumpOn ตามค่าจาก Firestore
             pumpOn = data['status'] == 'on';
-            auto = data['autoMode'] ?? false; // ดึงค่า autoMode ด้วย
+            auto = data['autoMode'] ?? false;
           });
         }
       }
     }, onError: (error) {
       print("Error listening to pump status: $error");
       ScaffoldMessenger.of(context).showSnackBar(
-        SnackBar(content: Text('เกิดข้อผิดพลาดในการเชื่อมต่อกับ Firebase: $error')),
+        SnackBar(content: Text('เกิดข้อผิดพลาดในการเชื่อมต่อสถานะปั๊ม: $error')),
       );
     });
   }
 
-  // ฟังก์ชันสำหรับฟังการเปลี่ยนแปลงประวัติการเติมน้ำจาก Firestore
   void _listenToWaterHistory() {
-    _firestore
+    _waterHistorySubscription = _firestore
         .collection('devices')
         .doc('pump')
-        .collection('history') // เข้าถึง subcollection 'history'
-        .orderBy('timestamp', descending: true) // เรียงลำดับตามเวลาล่าสุด
-        .limit(10) // จำกัดจำนวนประวัติที่แสดง
+        .collection('history')
+        .orderBy('timestamp', descending: true)
+        .limit(10)
         .snapshots()
         .listen((snapshot) {
       setState(() {
@@ -105,30 +90,51 @@ class _PumpPageState extends State<PumpPage> {
     }, onError: (error) {
       print("Error listening to water history: $error");
       ScaffoldMessenger.of(context).showSnackBar(
-        SnackBar(content: Text('เกิดข้อผิดพลาดในการโหลดประวัติการเติมน้ำ: $error')),
+        SnackBar(content: Text('เกิดข้อผิดพลาดในการโหลดประวัติ: $error')),
       );
     });
   }
 
-  // ฟังก์ชันสำหรับสลับสถานะปั๊มน้ำและอัปเดต Firestore
+  void _listenToWaterLevel() {
+    // ปรับปรุงการเข้าถึง Realtime Database ให้ตรงกับโครงสร้าง
+    final waterLevelRef = _database.ref('devices/pump/waterLevel');
+
+    _waterLevelSubscription = waterLevelRef.onValue.listen((event) {
+      final data = event.snapshot.value;
+      if (data != null) {
+        // เพิ่ม print เพื่อตรวจสอบค่าที่ได้รับจาก Firebase
+        print("Received water level from Firebase Realtime DB: $data");
+        setState(() {
+          waterLevel = double.tryParse(data.toString()) ?? 0.0;
+        });
+      }
+    }, onError: (error) {
+      print("Error listening to water level: $error");
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(content: Text('เกิดข้อผิดพลาดในการเชื่อมต่อระดับน้ำ: $error')),
+      );
+    });
+  }
+
+  // MARK: - Action Handlers
+
   Future<void> togglePump(bool value) async {
     setState(() {
       pumpOn = value;
-      if (pumpOn && auto) { // แก้ไขจาก autoMode เป็น auto
-        auto = false; // ถ้าเปิดเองด้วยมือ ให้ปิดโหมดอัตโนมัติ
+      if (pumpOn && auto) {
+        auto = false;
       }
     });
 
     try {
-      // อัปเดตสถานะใน Firestore
       await _firestore.collection('devices').doc('pump').set({
         'status': value ? 'on' : 'off',
-        'autoMode': auto, // อัปเดต autoMode ด้วย
-        'lastUpdated': FieldValue.serverTimestamp(), // บันทึกเวลาที่อัปเดต
-      }, SetOptions(merge: true)); // ใช้ merge เพื่อไม่ให้เขียนทับ field อื่นๆ
+        'autoMode': auto,
+        'lastUpdated': FieldValue.serverTimestamp(),
+      }, SetOptions(merge: true));
 
       if (value) {
-        _addWaterHistory('Manual'); // เพิ่มประวัติเมื่อเปิดด้วยมือ
+        _addWaterHistory('Manual');
       }
       ScaffoldMessenger.of(context).showSnackBar(
         SnackBar(content: Text('ปั๊มน้ำถูก ${value ? "เปิด" : "ปิด"} แล้ว')),
@@ -138,32 +144,29 @@ class _PumpPageState extends State<PumpPage> {
       ScaffoldMessenger.of(context).showSnackBar(
         SnackBar(content: Text('ไม่สามารถอัปเดตสถานะปั๊มน้ำได้: $e')),
       );
-      // ย้อนสถานะกลับหากเกิดข้อผิดพลาดในการอัปเดต Firebase
       setState(() {
         pumpOn = !value;
       });
     }
   }
 
-  // ฟังก์ชันสำหรับสลับโหมดอัตโนมัติและอัปเดต Firestore
   Future<void> toggleAuto() async {
     setState(() {
       auto = !auto;
       if (auto && pumpOn) {
-        pumpOn = false; // ถ้าเข้าโหมดอัตโนมัติ ให้ปิดการทำงานด้วยมือ
+        pumpOn = false;
       }
     });
 
     try {
-      // อัปเดตโหมดอัตโนมัติใน Firestore
       await _firestore.collection('devices').doc('pump').set({
         'autoMode': auto,
-        'status': pumpOn ? 'on' : 'off', // อัปเดต status ด้วย
+        'status': pumpOn ? 'on' : 'off',
         'lastUpdated': FieldValue.serverTimestamp(),
       }, SetOptions(merge: true));
 
       if (auto) {
-        _addWaterHistory('Auto'); // เพิ่มประวัติเมื่อเข้าโหมดอัตโนมัติ
+        _addWaterHistory('Auto');
       }
       ScaffoldMessenger.of(context).showSnackBar(
         SnackBar(content: Text('โหมดอัตโนมัติถูก ${auto ? "เปิด" : "ปิด"} แล้ว')),
@@ -173,26 +176,22 @@ class _PumpPageState extends State<PumpPage> {
       ScaffoldMessenger.of(context).showSnackBar(
         SnackBar(content: Text('ไม่สามารถอัปเดตโหมดอัตโนมัติได้: $e')),
       );
-      // ย้อนสถานะกลับหากเกิดข้อผิดพลาดในการอัปเดต Firebase
       setState(() {
         auto = !auto;
       });
     }
   }
 
-  // ฟังก์ชันสำหรับเพิ่มประวัติการเติมน้ำลง Firestore
   Future<void> _addWaterHistory(String mode) async {
     final now = DateTime.now();
     final item = {
       'time': '${now.hour}:${now.minute.toString().padLeft(2, '0')} น.',
-      'amount': '${(5 + (waterLevel % 10)).toStringAsFixed(1)} ลิตร ($mode)',
-      'timestamp': FieldValue.serverTimestamp(), // เพิ่ม timestamp สำหรับการเรียงลำดับ
+      'amount': '${(waterLevel).toStringAsFixed(1)} ลิตร ($mode)',
+      'timestamp': FieldValue.serverTimestamp(),
     };
 
     try {
       await _firestore.collection('devices').doc('pump').collection('history').add(item);
-      // ไม่ต้อง setState waterHistory ตรงๆ แล้ว เพราะ _listenToWaterHistory จะอัปเดตให้เอง
-      // ไม่ต้องเรียก widget.onUpdateWaterHistory(waterHistory) แล้ว เพราะข้อมูลจะถูกดึงจาก Firestore โดยตรง
     } catch (e) {
       print("Error adding water history to Firestore: $e");
       ScaffoldMessenger.of(context).showSnackBar(
@@ -201,7 +200,6 @@ class _PumpPageState extends State<PumpPage> {
     }
   }
 
-  // ฟังก์ชันสำหรับล้างประวัติการเติมน้ำใน Firestore
   void _clearWaterHistory() {
     showDialog(
       context: context,
@@ -217,7 +215,6 @@ class _PumpPageState extends State<PumpPage> {
             child: const Text('ล้าง', style: TextStyle(color: Colors.red, fontFamily: 'Prompt')),
             onPressed: () async {
               try {
-                // ลบเอกสารทั้งหมดใน subcollection 'history'
                 final historySnapshot = await _firestore.collection('devices').doc('pump').collection('history').get();
                 for (DocumentSnapshot doc in historySnapshot.docs) {
                   await doc.reference.delete();
@@ -240,6 +237,8 @@ class _PumpPageState extends State<PumpPage> {
     );
   }
 
+  // MARK: - UI Builders
+
   @override
   Widget build(BuildContext context) {
     return Scaffold(
@@ -249,7 +248,7 @@ class _PumpPageState extends State<PumpPage> {
           style: TextStyle(
             fontSize: widget.fontSize + 4,
             fontWeight: FontWeight.bold,
-            fontFamily: 'Prompt', // เพิ่ม fontFamily
+            fontFamily: 'Prompt',
           ),
         ),
         centerTitle: true,
@@ -275,7 +274,7 @@ class _PumpPageState extends State<PumpPage> {
                     style: TextStyle(
                       fontSize: widget.fontSize + 2,
                       fontWeight: FontWeight.bold,
-                      fontFamily: 'Prompt', // เพิ่ม fontFamily
+                      fontFamily: 'Prompt',
                     ),
                   ),
                   const Spacer(),
@@ -296,7 +295,7 @@ class _PumpPageState extends State<PumpPage> {
                       style: TextStyle(
                         fontSize: widget.fontSize - 2,
                         color: Colors.white,
-                        fontFamily: 'Prompt', // เพิ่ม fontFamily
+                        fontFamily: 'Prompt',
                       ),
                     ),
                   ),
@@ -312,7 +311,7 @@ class _PumpPageState extends State<PumpPage> {
                           style: TextStyle(
                             fontSize: widget.fontSize,
                             color: Colors.grey.shade600,
-                            fontFamily: 'Prompt', // เพิ่ม fontFamily
+                            fontFamily: 'Prompt',
                           ),
                         ),
                       )
@@ -323,21 +322,21 @@ class _PumpPageState extends State<PumpPage> {
                           final item = waterHistory[index];
                           return ListTile(
                             leading: Icon(
-                              FontAwesomeIcons.water, // Changed to FontAwesomeIcons.water
+                              FontAwesomeIcons.water,
                               color: Colors.blue.shade400,
                             ),
                             title: Text(
                               'เวลา: ${item['time']}',
                               style: TextStyle(
                                 fontSize: widget.fontSize,
-                                fontFamily: 'Prompt', // เพิ่ม fontFamily
+                                fontFamily: 'Prompt',
                               ),
                             ),
                             subtitle: Text(
                               'ปริมาณ: ${item['amount']}',
                               style: TextStyle(
                                 fontSize: widget.fontSize - 2,
-                                fontFamily: 'Prompt', // เพิ่ม fontFamily
+                                fontFamily: 'Prompt',
                               ),
                             ),
                           );
@@ -358,13 +357,13 @@ class _PumpPageState extends State<PumpPage> {
       shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(20)),
       child: InkWell(
         borderRadius: BorderRadius.circular(20),
-        onTap: () => togglePump(!pumpOn), // เรียกใช้ togglePump
+        onTap: () => togglePump(!pumpOn),
         child: Padding(
           padding: const EdgeInsets.all(16),
           child: Row(
             children: [
               Icon(
-                FontAwesomeIcons.water, // Changed to FontAwesomeIcons.water
+                FontAwesomeIcons.water,
                 color: pumpOn ? Colors.teal : Colors.grey,
                 size: 50,
               ),
@@ -378,7 +377,7 @@ class _PumpPageState extends State<PumpPage> {
                       style: TextStyle(
                         fontSize: widget.fontSize + 2,
                         fontWeight: FontWeight.w600,
-                        fontFamily: 'Prompt', // เพิ่ม fontFamily
+                        fontFamily: 'Prompt',
                       ),
                     ),
                     Text(
@@ -386,7 +385,7 @@ class _PumpPageState extends State<PumpPage> {
                       style: TextStyle(
                         fontSize: widget.fontSize,
                         color: Colors.grey.shade700,
-                        fontFamily: 'Prompt', // เพิ่ม fontFamily
+                        fontFamily: 'Prompt',
                       ),
                     ),
                   ],
@@ -395,7 +394,7 @@ class _PumpPageState extends State<PumpPage> {
               Switch(
                 value: pumpOn,
                 activeColor: Colors.green,
-                onChanged: togglePump, // เรียกใช้ togglePump
+                onChanged: togglePump,
               ),
             ],
           ),
@@ -411,13 +410,13 @@ class _PumpPageState extends State<PumpPage> {
       shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(20)),
       child: InkWell(
         borderRadius: BorderRadius.circular(20),
-        onTap: toggleAuto, // เรียกใช้ toggleAuto
+        onTap: toggleAuto,
         child: Padding(
           padding: const EdgeInsets.all(16),
           child: Row(
             children: [
               Icon(
-                FontAwesomeIcons.robot, // Changed to FontAwesomeIcons.robot for auto mode
+                FontAwesomeIcons.robot,
                 color: auto ? Colors.green : Colors.grey,
                 size: 50,
               ),
@@ -428,14 +427,14 @@ class _PumpPageState extends State<PumpPage> {
                   style: TextStyle(
                     fontSize: widget.fontSize + 2,
                     fontWeight: FontWeight.w600,
-                    fontFamily: 'Prompt', // เพิ่ม fontFamily
+                    fontFamily: 'Prompt',
                   ),
                 ),
               ),
               Switch(
                 value: auto,
                 activeColor: Colors.green,
-                onChanged: (_) => toggleAuto(), // เรียกใช้ toggleAuto
+                onChanged: (_) => toggleAuto(),
               ),
             ],
           ),
@@ -458,7 +457,7 @@ class _PumpPageState extends State<PumpPage> {
               style: TextStyle(
                 fontSize: widget.fontSize + 2,
                 fontWeight: FontWeight.bold,
-                fontFamily: 'Prompt', // เพิ่ม fontFamily
+                fontFamily: 'Prompt',
               ),
             ),
             const SizedBox(height: 8),
@@ -467,7 +466,7 @@ class _PumpPageState extends State<PumpPage> {
               style: TextStyle(
                 fontSize: widget.fontSize + 1,
                 color: Colors.blueGrey,
-                fontFamily: 'Prompt', // เพิ่ม fontFamily
+                fontFamily: 'Prompt',
               ),
             ),
             const SizedBox(height: 12),
