@@ -1,8 +1,10 @@
+import 'dart:async';
 import 'dart:convert';
 import 'package:flutter/material.dart';
 import 'package:shared_preferences/shared_preferences.dart';
+import 'package:firebase_core/firebase_core.dart';
+import 'package:firebase_database/firebase_database.dart';
 
-/// หน้า SoilDetailPageUpdated (รายละเอียดความชื้นในดิน พร้อมเพิ่ม-ลบถาดได้)
 class SoilDetailPageUpdated extends StatefulWidget {
   final String date;
   final String time;
@@ -28,24 +30,75 @@ class SoilDetailPageUpdated extends StatefulWidget {
 }
 
 class _SoilDetailPageUpdatedV2State extends State<SoilDetailPageUpdated> {
+  // ---- ตั้งให้ 1 ถาดมี 12 เซ็นเซอร์ ----
+  static const int kSensorsPerTray = 12;
+
   List<List<double>> traysCap = [];
   List<List<double>> traysRes = [];
   List<List<bool>> traysStatus = [];
   List<bool> traysConnected = [];
 
+  // RTDB
+  late final FirebaseDatabase _database;
+  static const String rtdbUrl =
+      'https://project-41b3d-default-rtdb.asia-southeast1.firebasedatabase.app';
+  StreamSubscription<DatabaseEvent>? _soilMoistureSub;
+
   @override
   void initState() {
     super.initState();
-    // ใช้ข้อมูลที่ส่งมาจาก Dashboard แทนการโหลดจาก SharedPreferences ใน initState
-    // หรือคุณสามารถเลือกที่จะโหลดจาก SharedPreferences ถ้าต้องการให้ค่าคงอยู่แม้ปิดแอป
-    traysCap = List<List<double>>.from(widget.traysCap.map((list) => List<double>.from(list)));
-    traysRes = List<List<double>>.from(widget.traysRes.map((list) => List<double>.from(list)));
-    traysStatus = List<List<bool>>.from(widget.traysStatus.map((list) => List<bool>.from(list)));
-    traysConnected = List<bool>.from(widget.traysConnected);
 
-    loadData(); // ยังคงเรียก loadData เพื่อโหลดข้อมูลที่บันทึกไว้ (ถ้ามี)
+    // clone ค่าจาก parent แล้ว normalize เป็น 12 เซ็นเซอร์/ถาด
+    traysCap = widget.traysCap.map((l) => _ensureLenDouble(l)).toList();
+    traysRes = widget.traysRes.map((l) => _ensureLenDouble(l)).toList();
+    traysStatus = widget.traysStatus.map((l) => _ensureLenBool(l)).toList();
+    traysConnected = List<bool>.from(widget.traysConnected);
+    if (traysCap.isEmpty) {
+      traysCap = [List.filled(kSensorsPerTray, 0.0)];
+      traysRes = [List.filled(kSensorsPerTray, 0.0)];
+      traysStatus = [List.filled(kSensorsPerTray, true)];
+      traysConnected = [true];
+    }
+
+    _database = FirebaseDatabase.instanceFor(
+      app: Firebase.app(),
+      databaseURL: rtdbUrl,
+    );
+
+    // โหลดจาก local แล้วฟังค่า RTDB
+    loadData().then((_) => _listenToSoilMoisture());
   }
 
+  @override
+  void dispose() {
+    _soilMoistureSub?.cancel();
+    super.dispose();
+  }
+
+  // --------- RTDB: ผูกเฉพาะเซ็นเซอร์ 1 (index 0) ----------
+  void _listenToSoilMoisture() {
+    final ref = _database.ref('devices/pump/soilMoisture');
+    _soilMoistureSub = ref.onValue.listen((event) {
+      final raw = event.snapshot.value;
+      double? v;
+      if (raw is num) v = raw.toDouble();
+      if (raw is String) v = double.tryParse(raw);
+
+      if (v != null) {
+        final val = v.clamp(0, 100).toDouble();
+        setState(() {
+          for (int t = 0; t < traysRes.length; t++) {
+            traysRes[t][0] = val;            // <-- อัปเดตเฉพาะเซ็นเซอร์ 1
+            // ที่เหลือ index 1..11 คงไว้ (mockup), เริ่มต้นคือ 0.0
+          }
+        });
+      }
+    }, onError: (e) {
+      debugPrint('SoilMoisture listener error: $e');
+    });
+  }
+
+  // ---------- Local storage ----------
   Future<void> loadData() async {
     final prefs = await SharedPreferences.getInstance();
     final savedCap = prefs.getString('traysCap');
@@ -56,22 +109,28 @@ class _SoilDetailPageUpdatedV2State extends State<SoilDetailPageUpdated> {
     setState(() {
       traysCap = savedCap != null
           ? (jsonDecode(savedCap) as List)
-                .map<List<double>>((t) => List<double>.from(t))
-                .toList()
-          : [List.filled(6, 0.0)];
+              .map<List<double>>((t) => _ensureLenDouble(List<double>.from(t)))
+              .toList()
+          : traysCap;
       traysRes = savedRes != null
           ? (jsonDecode(savedRes) as List)
-                .map<List<double>>((t) => List<double>.from(t))
-                .toList()
-          : [List.filled(6, 0.0)];
+              .map<List<double>>((t) => _ensureLenDouble(List<double>.from(t)))
+              .toList()
+          : traysRes;
       traysStatus = savedStatus != null
           ? (jsonDecode(savedStatus) as List)
-                .map<List<bool>>((t) => List<bool>.from(t))
-                .toList()
-          : [List.filled(6, true)];
+              .map<List<bool>>((t) => _ensureLenBool(List<bool>.from(t)))
+              .toList()
+          : traysStatus;
       traysConnected = savedConnected != null
           ? List<bool>.from(jsonDecode(savedConnected))
-          : [true];
+          : traysConnected;
+      if (traysCap.isEmpty) {
+        traysCap = [List.filled(kSensorsPerTray, 0.0)];
+        traysRes = [List.filled(kSensorsPerTray, 0.0)];
+        traysStatus = [List.filled(kSensorsPerTray, true)];
+        traysConnected = [true];
+      }
     });
   }
 
@@ -85,9 +144,9 @@ class _SoilDetailPageUpdatedV2State extends State<SoilDetailPageUpdated> {
 
   void addTray() {
     setState(() {
-      traysCap.add(List.filled(6, 0.0));
-      traysRes.add(List.filled(6, 0.0));
-      traysStatus.add(List.filled(6, true));
+      traysCap.add(List.filled(kSensorsPerTray, 0.0));
+      traysRes.add(List.filled(kSensorsPerTray, 0.0));
+      traysStatus.add(List.filled(kSensorsPerTray, true));
       traysConnected.add(true);
     });
     saveData();
@@ -103,25 +162,29 @@ class _SoilDetailPageUpdatedV2State extends State<SoilDetailPageUpdated> {
     saveData();
   }
 
+  // ---------- Helpers ----------
+  List<double> _ensureLenDouble(List<double> src) {
+    if (src.length == kSensorsPerTray) return List<double>.from(src);
+    if (src.length > kSensorsPerTray) return src.sublist(0, kSensorsPerTray);
+    return List<double>.from(src)..addAll(List.filled(kSensorsPerTray - src.length, 0.0));
+  }
+
+  List<bool> _ensureLenBool(List<bool> src) {
+    if (src.length == kSensorsPerTray) return List<bool>.from(src);
+    if (src.length > kSensorsPerTray) return src.sublist(0, kSensorsPerTray);
+    return List<bool>.from(src)..addAll(List.filled(kSensorsPerTray - src.length, true));
+  }
+
+  // ---------- UI ----------
   @override
   Widget build(BuildContext context) {
     return Scaffold(
       appBar: AppBar(
-        title: Text(
-          'ความชื้นในดิน',
-          style: TextStyle(
-            fontSize: widget.fontSize + 3,
-            fontWeight: FontWeight.bold,
-          ),
-        ),
+        title: Text('ความชื้นในดิน', style: TextStyle(fontSize: widget.fontSize + 3, fontWeight: FontWeight.bold)),
         centerTitle: true,
         backgroundColor: Colors.teal.shade700,
         actions: [
-          IconButton(
-            icon: const Icon(Icons.add),
-            tooltip: 'เพิ่มถาดความชื้น',
-            onPressed: addTray,
-          ),
+          IconButton(icon: const Icon(Icons.add), tooltip: 'เพิ่มถาดความชื้น', onPressed: addTray),
         ],
       ),
       body: traysCap.isEmpty
@@ -129,9 +192,7 @@ class _SoilDetailPageUpdatedV2State extends State<SoilDetailPageUpdated> {
           : ListView.builder(
               padding: const EdgeInsets.all(12),
               itemCount: traysCap.length,
-              itemBuilder: (context, trayIndex) {
-                return buildTrayCard(trayIndex);
-              },
+              itemBuilder: (context, trayIndex) => buildTrayCard(trayIndex),
             ),
     );
   }
@@ -149,14 +210,8 @@ class _SoilDetailPageUpdatedV2State extends State<SoilDetailPageUpdated> {
             Row(
               children: [
                 Expanded(
-                  child: Text(
-                    'ถาด ${trayIndex + 1}',
-                    style: TextStyle(
-                      fontSize: widget.fontSize + 3,
-                      fontWeight: FontWeight.bold,
-                      color: Colors.teal.shade800,
-                    ),
-                  ),
+                  child: Text('ถาด ${trayIndex + 1}',
+                      style: TextStyle(fontSize: widget.fontSize + 3, fontWeight: FontWeight.bold, color: Colors.teal.shade800)),
                 ),
                 IconButton(
                   onPressed: () => removeTray(trayIndex),
@@ -166,21 +221,16 @@ class _SoilDetailPageUpdatedV2State extends State<SoilDetailPageUpdated> {
               ],
             ),
             const SizedBox(height: 4),
-            Text(
-              'วันที่: ${widget.date}  เวลา: ${widget.time}',
-              style: TextStyle(
-                fontSize: widget.fontSize,
-                color: Colors.grey.shade600,
-              ),
-            ),
+            Text('วันที่: ${widget.date}   เวลา: ${widget.time}',
+                style: TextStyle(fontSize: widget.fontSize, color: Colors.grey.shade600)),
             const SizedBox(height: 12),
-            ...List.generate(6, (sensorIndex) {
-              bool status = traysStatus[trayIndex][sensorIndex];
-              double capVal = traysCap[trayIndex][sensorIndex];
-              double resVal = traysRes[trayIndex][sensorIndex];
 
-              String statusText = status ? '✅ ปกติ' : '❌ ขัดข้อง';
-              Color statusColor = status ? Colors.green : Colors.red;
+            // แสดง 12 เซ็นเซอร์ใน 1 ถาด (RTDB ผูกเฉพาะเซ็นเซอร์ 1)
+            ...List.generate(kSensorsPerTray, (sensorIndex) {
+              final bool status = traysStatus[trayIndex][sensorIndex];
+              final double resVal = traysRes[trayIndex][sensorIndex]; // sensor 1 จะอัปเดตจริง, ที่เหลือ 0.0
+              final String statusText = status ? '✅ ปกติ' : '❌ ขัดข้อง';
+              final Color statusColor = status ? Colors.green : Colors.red;
 
               return Container(
                 margin: const EdgeInsets.symmetric(vertical: 8),
@@ -188,13 +238,7 @@ class _SoilDetailPageUpdatedV2State extends State<SoilDetailPageUpdated> {
                 decoration: BoxDecoration(
                   borderRadius: BorderRadius.circular(16),
                   color: Colors.white,
-                  boxShadow: [
-                    BoxShadow(
-                      color: Colors.grey.withOpacity(0.15),
-                      blurRadius: 6,
-                      offset: const Offset(0, 3),
-                    ),
-                  ],
+                  boxShadow: [BoxShadow(color: Colors.grey.withOpacity(0.15), blurRadius: 6, offset: const Offset(0, 3))],
                 ),
                 child: Column(
                   crossAxisAlignment: CrossAxisAlignment.start,
@@ -203,71 +247,28 @@ class _SoilDetailPageUpdatedV2State extends State<SoilDetailPageUpdated> {
                       children: [
                         CircleAvatar(
                           backgroundColor: statusColor.withOpacity(0.1),
-                          child: Icon(
-                            status ? Icons.check_circle : Icons.error,
-                            color: statusColor,
-                          ),
+                          child: Icon(status ? Icons.check_circle : Icons.error, color: statusColor),
                         ),
                         const SizedBox(width: 12),
                         Expanded(
-                          child: Text(
-                            'เซ็นเซอร์ ${sensorIndex + 1}',
-                            style: TextStyle(
-                              fontSize: widget.fontSize + 1,
-                              fontWeight: FontWeight.w600,
-                            ),
-                          ),
+                          child: Text('เซ็นเซอร์ ${sensorIndex + 1}',
+                              style: TextStyle(fontSize: widget.fontSize + 1, fontWeight: FontWeight.w600)),
                         ),
-                        Text(
-                          statusText,
-                          style: TextStyle(
-                            color: statusColor,
-                            fontWeight: FontWeight.bold,
-                          ),
-                        ),
+                        Text(statusText, style: TextStyle(color: statusColor, fontWeight: FontWeight.bold)),
                       ],
                     ),
                     const SizedBox(height: 12),
-                    Row(
-                      children: [
-                        Expanded(
-                          child: Column(
-                            crossAxisAlignment: CrossAxisAlignment.start,
-                            children: [
-                              Text(
-                                'ค่าความจุ: ${capVal.toStringAsFixed(1)}%',
-                                style: TextStyle(fontSize: widget.fontSize),
-                              ),
-                              const SizedBox(height: 6),
-                              LinearProgressIndicator(
-                                value: capVal / 100,
-                                minHeight: 10,
-                                color: Colors.blue.shade400,
-                                backgroundColor: Colors.blue.shade100,
-                              ),
-                            ],
-                          ),
-                        ),
-                        const SizedBox(width: 16),
-                        Expanded(
-                          child: Column(
-                            crossAxisAlignment: CrossAxisAlignment.start,
-                            children: [
-                              Text(
-                                'ค่าความชื้น: ${resVal.toStringAsFixed(1)}%',
-                                style: TextStyle(fontSize: widget.fontSize),
-                              ),
-                              const SizedBox(height: 6),
-                              LinearProgressIndicator(
-                                value: resVal / 100,
-                                minHeight: 10,
-                                color: Colors.teal.shade400,
-                                backgroundColor: Colors.teal.shade100,
-                              ),
-                            ],
-                          ),
-                        ),
-                      ],
+                    Text('ค่าความชื้น: ${resVal.toStringAsFixed(1)}%',
+                        style: TextStyle(fontSize: widget.fontSize)),
+                    const SizedBox(height: 6),
+                    ClipRRect(
+                      borderRadius: BorderRadius.circular(10),
+                      child: LinearProgressIndicator(
+                        value: (resVal / 100).clamp(0.0, 1.0),
+                        minHeight: 10,
+                        backgroundColor: Colors.teal.shade100,
+                        valueColor: AlwaysStoppedAnimation(Colors.teal.shade400),
+                      ),
                     ),
                   ],
                 ),

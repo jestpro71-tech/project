@@ -3,20 +3,27 @@ import 'dart:convert';
 import 'package:flutter/material.dart';
 import 'package:http/http.dart' as http;
 import 'package:intl/intl.dart';
-import 'package:latlong2/latlong.dart'; // สำหรับ GPSPage
+import 'package:latlong2/latlong.dart';
 import 'package:endproject/screens/pump_page.dart';
 import 'package:endproject/screens/sprinkler_page.dart';
 import 'package:endproject/screens/gps_page.dart';
 import 'package:endproject/screens/soil_detail_page.dart';
 import 'package:endproject/screens/power_usage_page.dart';
 import 'package:endproject/widgets/modern_card.dart';
-import 'package:font_awesome_flutter/font_awesome_flutter.dart'; // เพิ่ม import FontAwesomeIcons
-import 'package:endproject/screens/pump_detail_page.dart'; // Import PumpDetailPage
-import 'package:endproject/screens/sprinkler_detail_page.dart'; // Import SprinklerDetailPage
-import 'package:endproject/screens/sensor_detail_page.dart'; // Import SensorDetailPage (for individual sensors)
+import 'package:font_awesome_flutter/font_awesome_flutter.dart';
+import 'package:endproject/screens/pump_detail_page.dart';
+import 'package:endproject/screens/sprinkler_detail_page.dart';
+import 'package:endproject/screens/sensor_detail_page.dart';
+
+import 'package:firebase_core/firebase_core.dart';        // <-- เพิ่ม
+import 'package:firebase_database/firebase_database.dart'; // <-- ใช้คู่กัน
 
 // กำหนด URL ของ ESP32 เป็นค่าคงที่
 const String esp32Url = 'http://192.168.1.100';
+
+// URL ของ Realtime Database (asia-southeast1)
+const String rtdbUrl =
+    'https://project-41b3d-default-rtdb.asia-southeast1.firebasedatabase.app';
 
 class DashboardScreen extends StatefulWidget {
   const DashboardScreen({super.key});
@@ -26,15 +33,21 @@ class DashboardScreen extends StatefulWidget {
 }
 
 class _DashboardScreenState extends State<DashboardScreen> {
-  double fontSize = 14; // นี่คือ fontSize หลักที่คุณสามารถปรับได้
+  double fontSize = 14;
+
+  // ใช้ late final แล้วกำหนดค่าจริงใน initState() หลัง Firebase.init เสร็จ
+  late final FirebaseDatabase _database;
+
+  // Stream Subscriptions
+  StreamSubscription<DatabaseEvent>? _waterLevelSubscription;
 
   bool pumpOn = false;
   bool pumpAuto = true;
-
   bool sprinklerOn = false;
   bool sprinklerAuto = true;
 
-  double waterLevel = 20;
+  // จะถูกอัปเดตจาก Firebase
+  double waterLevel = 0.0;
 
   String date = '', time = '';
   Timer? timer;
@@ -52,13 +65,22 @@ class _DashboardScreenState extends State<DashboardScreen> {
   @override
   void initState() {
     super.initState();
+
+    // ชี้ไปยัง RTDB instance ที่ถูกต้อง
+    _database = FirebaseDatabase.instanceFor(
+      app: Firebase.app(),
+      databaseURL: rtdbUrl,
+    );
+
     updateDateTime();
+    _listenToWaterLevel(); // ฟังการเปลี่ยนแปลง waterLevel จาก Firebase
+
     timer = Timer.periodic(const Duration(seconds: 2), (_) {
       updateDateTime();
       fetchSoilData();
       fetchPumpStatus();
       fetchSprinklerStatus();
-      controlAutoPump();
+      // controlAutoPump(); // ถ้าจะใช้ค่อยเปิด
       controlAutoSprinkler();
     });
   }
@@ -66,7 +88,43 @@ class _DashboardScreenState extends State<DashboardScreen> {
   @override
   void dispose() {
     timer?.cancel();
+    _waterLevelSubscription?.cancel();
     super.dispose();
+  }
+
+  // MARK: - Firebase Listener
+  void _listenToWaterLevel() {
+    final waterLevelRef = _database.ref('devices/pump/waterLevel');
+
+    _waterLevelSubscription = waterLevelRef.onValue.listen(
+      (event) {
+        final data = event.snapshot.value;
+
+        if (data != null) {
+          double? parsedWaterLevel;
+
+          if (data is num) {
+            parsedWaterLevel = data.toDouble();
+          } else if (data is String) {
+            parsedWaterLevel = double.tryParse(data);
+          }
+
+          if (parsedWaterLevel != null) {
+            setState(() {
+              waterLevel = parsedWaterLevel!;
+            });
+          } else {
+            debugPrint("Warning: Could not parse water level data: $data");
+            setState(() => waterLevel = 0.0);
+          }
+        } else {
+          setState(() => waterLevel = 0.0);
+        }
+      },
+      onError: (error) {
+        debugPrint("Error listening to water level: $error");
+      },
+    );
   }
 
   void updateDateTime() {
@@ -77,7 +135,7 @@ class _DashboardScreenState extends State<DashboardScreen> {
     });
   }
 
-  // ส่วนฟังก์ชันควบคุม Auto ปั๊มน้ำ และ Auto สปริงเกอร์
+  // --- Auto controls ---
   void controlAutoPump() {
     if (!pumpAuto) return;
     if (waterLevel < 9) {
@@ -92,13 +150,12 @@ class _DashboardScreenState extends State<DashboardScreen> {
     for (int tray = 0; tray < traysCap.length; tray++) {
       double avg =
           ((traysCap[tray].reduce((a, b) => a + b) / 6) +
-              (traysRes[tray].reduce((a, b) => a + b) / 6)) /
-          2;
+                  (traysRes[tray].reduce((a, b) => a + b) / 6)) /
+              2;
       if (avg < 70) {
         if (!sprinklerOn) {
           toggleSprinkler(true);
           sprinklerHistory.add({'tray': tray + 1, 'time': time});
-          waterLevel = (waterLevel - 5).clamp(0, 30);
         }
       } else if (avg >= 80) {
         if (sprinklerOn) toggleSprinkler(false);
@@ -106,16 +163,15 @@ class _DashboardScreenState extends State<DashboardScreen> {
     }
   }
 
-  // ส่วนฟังก์ชันควบคุมปั๊มน้ำและสปริงเกอร์ (เปิด-ปิด)
+  // --- Controls ---
   void togglePump(bool v) async {
     setState(() => pumpOn = v);
     final url = v ? '/pump/on' : '/pump/off';
     try {
       await http.get(Uri.parse('$esp32Url$url'));
     } catch (e) {
-      print('Error: $e');
+      debugPrint('Error: $e');
     }
-    if (v) addWaterHistory();
   }
 
   void toggleSprinkler(bool v) async {
@@ -124,18 +180,11 @@ class _DashboardScreenState extends State<DashboardScreen> {
     try {
       await http.get(Uri.parse('$esp32Url$url'));
     } catch (e) {
-      print('Error: $e');
+      debugPrint('Error: $e');
     }
   }
 
-  void addWaterHistory() {
-    setState(() {
-      waterHistory.add({'time': time, 'amount': '5 ลิตร'});
-      waterLevel = (waterLevel + 5).clamp(0, 30);
-    });
-  }
-
-  // ส่วนฟังก์ชันดึงข้อมูลจาก ESP32
+  // --- Fetch from ESP32 ---
   void fetchSoilData() async {
     try {
       final res = await http.get(Uri.parse('$esp32Url/soil'));
@@ -164,19 +213,18 @@ class _DashboardScreenState extends State<DashboardScreen> {
         });
       }
     } catch (e) {
-      print('Error soil fetch: $e');
+      debugPrint('Error soil fetch: $e');
     }
   }
 
   void fetchPumpStatus() async {
-    // Placeholder API call to update pumpOn state
+    // Placeholder
   }
 
   void fetchSprinklerStatus() async {
-    // Placeholder API call to update sprinklerOn state
+    // Placeholder
   }
 
-  // ส่วนเพิ่มถาดปลูก (กรณีต้องการเพิ่มถาดใหม่)
   void addTray() {
     setState(() {
       traysCap.add(List.filled(6, 0.0));
@@ -186,7 +234,6 @@ class _DashboardScreenState extends State<DashboardScreen> {
     });
   }
 
-  // ส่วน Build UI หลักของหน้า Dashboard
   @override
   Widget build(BuildContext context) {
     return Scaffold(
@@ -235,7 +282,6 @@ class _DashboardScreenState extends State<DashboardScreen> {
                     Row(
                       mainAxisAlignment: MainAxisAlignment.center,
                       children: [
-                        // Changed to FontAwesomeIcons.calendarDays
                         Icon(
                           FontAwesomeIcons.calendarDays,
                           color: Colors.green.shade700,
@@ -251,7 +297,6 @@ class _DashboardScreenState extends State<DashboardScreen> {
                           ),
                         ),
                         const SizedBox(width: 16),
-                        // Changed to FontAwesomeIcons.clock
                         Icon(
                           FontAwesomeIcons.clock,
                           color: Colors.green.shade700,
@@ -291,21 +336,17 @@ class _DashboardScreenState extends State<DashboardScreen> {
             ),
 
             const SizedBox(height: 18),
-            // GridView แสดงเมนู Dashboard
             Expanded(
               child: GridView.count(
                 crossAxisCount: 2,
                 mainAxisSpacing: 20,
                 crossAxisSpacing: 20,
-                // ปรับค่า childAspectRatio เพื่อให้การ์ดสูงขึ้นเล็กน้อยและดูสมดุล
-                // ค่าที่น้อยกว่า 1.0 จะทำให้การ์ดสูงขึ้นเมื่อเทียบกับความกว้าง
-                childAspectRatio: 0.9, // ปรับค่าจาก 0.8 เป็น 0.9
+                childAspectRatio: 0.9,
                 children: [
-                  // 🚰 ความชื้นในดิน
                   ModernCard(
                     title: 'ความชื้นในดิน',
                     subtitle: 'ตรวจสอบค่าความชื้น',
-                    icon: FontAwesomeIcons.droplet, // ใช้ Font Awesome icon
+                    icon: FontAwesomeIcons.droplet,
                     gradientColors: const [
                       Color.fromARGB(255, 155, 235, 173),
                       Color.fromARGB(255, 54, 249, 103),
@@ -329,49 +370,37 @@ class _DashboardScreenState extends State<DashboardScreen> {
                     titleFontSize: fontSize + 2,
                     subtitleFontSize: fontSize - 2,
                   ),
-
-                  // 💧 ปั๊มน้ำ
                   ModernCard(
                     title: 'ปั๊มน้ำ',
-                    subtitle: pumpOn ? 'สถานะ: ทำงาน' : 'สถานะ: ปิดอยู่',
-                    icon: FontAwesomeIcons.water, // ใช้ Font Awesome icon
+                    // แสดงระดับน้ำที่ดึงมาจาก Firebase
+                    subtitle: 'ระดับน้ำ: ${waterLevel.toStringAsFixed(1)} ลิตร',
+                    icon: FontAwesomeIcons.water,
                     gradientColors: const [
                       Color.fromARGB(255, 159, 192, 255),
                       Color.fromARGB(255, 94, 207, 255),
                     ],
                     onTap: () async {
-                      // ส่งข้อมูลและรอรับค่ากลับจาก PumpPage
-                      final updatedHistory = await Navigator.push(
+                      Navigator.push(
                         context,
                         MaterialPageRoute(
                           builder: (_) => PumpPage(
-                            // ไม่ต้องส่งค่า initial... อีกต่อไป
                             fontSize: 16.0,
                           ),
                         ),
                       );
-                      // อัปเดต state ของ Dashboard หากมีการเปลี่ยนแปลง waterHistory
-                      if (updatedHistory is List<Map<String, String>>) {
-                        setState(() {
-                          waterHistory = updatedHistory;
-                        });
-                      }
                     },
                     titleFontSize: fontSize + 2,
                     subtitleFontSize: fontSize - 2,
                   ),
-
-                  // 🌾 สปริงเกอร์
                   ModernCard(
                     title: 'สปริงเกอร์',
                     subtitle: sprinklerOn ? 'กำลังรดน้ำ' : 'ปิดอยู่',
-                    icon: FontAwesomeIcons.seedling, // ใช้ Font Awesome icon
+                    icon: FontAwesomeIcons.seedling,
                     gradientColors: const [
                       Color.fromARGB(255, 241, 203, 146),
                       Color.fromARGB(255, 249, 121, 82),
                     ],
                     onTap: () async {
-                      // ส่งข้อมูลและรอรับค่ากลับจาก SprinklerPage
                       final updatedHistory = await Navigator.push(
                         context,
                         MaterialPageRoute(
@@ -381,7 +410,6 @@ class _DashboardScreenState extends State<DashboardScreen> {
                             initialHistory: sprinklerHistory,
                             fontSize: fontSize,
                             onUpdateHistory: (history) {
-                              // Callback ที่จะถูกเรียกเมื่อมีการอัปเดตประวัติใน SprinklerPage
                               setState(() {
                                 sprinklerHistory = history;
                               });
@@ -389,7 +417,6 @@ class _DashboardScreenState extends State<DashboardScreen> {
                           ),
                         ),
                       );
-                      // อัปเดต state ของ Dashboard หากมีการเปลี่ยนแปลง sprinklerHistory
                       if (updatedHistory is List<Map<String, dynamic>>) {
                         setState(() {
                           sprinklerHistory = updatedHistory;
@@ -399,12 +426,10 @@ class _DashboardScreenState extends State<DashboardScreen> {
                     titleFontSize: fontSize + 2,
                     subtitleFontSize: fontSize - 2,
                   ),
-
-                  // ⚡ อัตราการใช้ไฟฟ้า
                   ModernCard(
                     title: 'อัตราการใช้ไฟฟ้า',
                     subtitle: 'เช็คพลังงาน',
-                    icon: FontAwesomeIcons.bolt, // ใช้ Font Awesome icon
+                    icon: FontAwesomeIcons.bolt,
                     gradientColors: const [
                       Color.fromARGB(255, 238, 218, 153),
                       Color.fromARGB(255, 246, 193, 70),
@@ -416,8 +441,6 @@ class _DashboardScreenState extends State<DashboardScreen> {
                           builder: (_) => PowerUsagePage(
                             fontSize: fontSize,
                             sensors: [
-                              // เปลี่ยนเป็น List ที่สามารถแก้ไขได้
-                              // ข้อมูลปั๊มน้ำ
                               {
                                 'name': 'ปั๊มน้ำ',
                                 'watt': 12.5,
@@ -425,10 +448,8 @@ class _DashboardScreenState extends State<DashboardScreen> {
                                 'lastUsed': '09:45 น.',
                                 'usageCountToday': 3,
                                 'icon': FontAwesomeIcons.water,
-                                // เพิ่ม detailPage สำหรับปั๊มน้ำ
                                 'detailPage': () => const PumpDetailPage(),
                               },
-                              // ข้อมูลสปริงเกอร์
                               {
                                 'name': 'สปริงเกอร์',
                                 'watt': 8.3,
@@ -436,10 +457,8 @@ class _DashboardScreenState extends State<DashboardScreen> {
                                 'lastUsed': '07:30 น.',
                                 'usageCountToday': 2,
                                 'icon': FontAwesomeIcons.seedling,
-                                // เพิ่ม detailPage สำหรับสปริงเกอร์
                                 'detailPage': () => const SprinklerDetailPage(),
                               },
-                              // ข้อมูลเซ็นเซอร์ 1
                               {
                                 'name': 'เซนเซอร์ 1',
                                 'watt': 0.3,
@@ -447,7 +466,6 @@ class _DashboardScreenState extends State<DashboardScreen> {
                                 'lastUsed': '-',
                                 'usageCountToday': 0,
                                 'icon': FontAwesomeIcons.droplet,
-                                // เพิ่ม detailPage สำหรับเซ็นเซอร์ 1
                                 'detailPage': () => const SensorDetailPage(
                                   sensor: {
                                     'name': 'เซนเซอร์ 1',
@@ -456,7 +474,6 @@ class _DashboardScreenState extends State<DashboardScreen> {
                                   },
                                 ),
                               },
-                              // ข้อมูลเซ็นเซอร์ 2
                               {
                                 'name': 'เซนเซอร์ 2',
                                 'watt': 0.3,
@@ -464,7 +481,6 @@ class _DashboardScreenState extends State<DashboardScreen> {
                                 'lastUsed': '-',
                                 'usageCountToday': 0,
                                 'icon': FontAwesomeIcons.droplet,
-                                // เพิ่ม detailPage สำหรับเซ็นเซอร์ 2
                                 'detailPage': () => const SensorDetailPage(
                                   sensor: {
                                     'name': 'เซนเซอร์ 2',
@@ -473,7 +489,6 @@ class _DashboardScreenState extends State<DashboardScreen> {
                                   },
                                 ),
                               },
-                              // ข้อมูลเซ็นเซอร์ 3
                               {
                                 'name': 'เซนเซอร์ 3',
                                 'watt': 0.3,
@@ -481,7 +496,6 @@ class _DashboardScreenState extends State<DashboardScreen> {
                                 'lastUsed': '-',
                                 'usageCountToday': 0,
                                 'icon': FontAwesomeIcons.droplet,
-                                // เพิ่ม detailPage สำหรับเซ็นเซอร์ 3
                                 'detailPage': () => const SensorDetailPage(
                                   sensor: {
                                     'name': 'เซนเซอร์ 3',
@@ -498,12 +512,10 @@ class _DashboardScreenState extends State<DashboardScreen> {
                     titleFontSize: fontSize + 1,
                     subtitleFontSize: fontSize - 2,
                   ),
-
-                  // 📍 GPS Smart Farm
                   ModernCard(
                     title: 'GPS Smart Farm',
                     subtitle: 'ดูตำแหน่งแปลงเกษตร',
-                    icon: FontAwesomeIcons.locationDot, // ใช้ Font Awesome icon
+                    icon: FontAwesomeIcons.locationDot,
                     gradientColors: const [
                       Color.fromARGB(255, 252, 231, 179),
                       Color.fromARGB(255, 246, 174, 41),
