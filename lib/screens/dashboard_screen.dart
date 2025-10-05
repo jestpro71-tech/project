@@ -15,8 +15,8 @@ import 'package:endproject/screens/pump_detail_page.dart';
 import 'package:endproject/screens/sprinkler_detail_page.dart';
 import 'package:endproject/screens/sensor_detail_page.dart';
 
-import 'package:firebase_core/firebase_core.dart';        // <-- เพิ่ม
-import 'package:firebase_database/firebase_database.dart'; // <-- ใช้คู่กัน
+import 'package:firebase_core/firebase_core.dart';
+import 'package:firebase_database/firebase_database.dart';
 
 // กำหนด URL ของ ESP32 เป็นค่าคงที่
 const String esp32Url = 'http://192.168.1.100';
@@ -35,11 +35,11 @@ class DashboardScreen extends StatefulWidget {
 class _DashboardScreenState extends State<DashboardScreen> {
   double fontSize = 14;
 
-  // ใช้ late final แล้วกำหนดค่าจริงใน initState() หลัง Firebase.init เสร็จ
   late final FirebaseDatabase _database;
 
   // Stream Subscriptions
   StreamSubscription<DatabaseEvent>? _waterLevelSubscription;
+  StreamSubscription<DatabaseEvent>? _gpsSubscription; // Subscription สำหรับ GPS
 
   bool pumpOn = false;
   bool pumpAuto = true;
@@ -48,6 +48,10 @@ class _DashboardScreenState extends State<DashboardScreen> {
 
   // จะถูกอัปเดตจาก Firebase
   double waterLevel = 0.0;
+  
+  // เปลี่ยนชื่อตัวแปรเพื่อความชัดเจนขึ้น
+  // กำหนดค่าเริ่มต้นเป็น LatLng ของเชียงใหม่ (หรือพิกัดตั้งต้นที่ต้องการ)
+  LatLng _currentGpsPosition = const LatLng(18.7953, 98.9986); 
 
   String date = '', time = '';
   Timer? timer;
@@ -60,27 +64,25 @@ class _DashboardScreenState extends State<DashboardScreen> {
   List<Map<String, String>> waterHistory = [];
   List<Map<String, dynamic>> sprinklerHistory = [];
 
-  final LatLng gpsPosition = const LatLng(18.7953, 98.9986);
-
   @override
   void initState() {
     super.initState();
 
-    // ชี้ไปยัง RTDB instance ที่ถูกต้อง
     _database = FirebaseDatabase.instanceFor(
       app: Firebase.app(),
       databaseURL: rtdbUrl,
     );
 
     updateDateTime();
-    _listenToWaterLevel(); // ฟังการเปลี่ยนแปลง waterLevel จาก Firebase
+    _listenToWaterLevel(); // ฟังการเปลี่ยนแปลง waterLevel
+    _listenToGPSPosition(); // ฟังการเปลี่ยนแปลง GPS
 
     timer = Timer.periodic(const Duration(seconds: 2), (_) {
       updateDateTime();
       fetchSoilData();
       fetchPumpStatus();
       fetchSprinklerStatus();
-      // controlAutoPump(); // ถ้าจะใช้ค่อยเปิด
+      // controlAutoPump(); 
       controlAutoSprinkler();
     });
   }
@@ -89,6 +91,7 @@ class _DashboardScreenState extends State<DashboardScreen> {
   void dispose() {
     timer?.cancel();
     _waterLevelSubscription?.cancel();
+    _gpsSubscription?.cancel(); // ยกเลิก subscription
     super.dispose();
   }
 
@@ -123,6 +126,33 @@ class _DashboardScreenState extends State<DashboardScreen> {
       },
       onError: (error) {
         debugPrint("Error listening to water level: $error");
+      },
+    );
+  }
+
+  // Firebase Listener สำหรับ GPS
+  void _listenToGPSPosition() {
+    // สมมติว่าโครงสร้างใน Firebase คือ devices/gps และมี child เป็น latitude กับ longitude
+    final gpsRef = _database.ref('devices/gps'); 
+
+    _gpsSubscription = gpsRef.onValue.listen(
+      (event) {
+        final data = event.snapshot.value;
+        if (data != null && data is Map) {
+          final lat = data['latitude'] as num?; // ดึง latitude
+          final lng = data['longitude'] as num?; // ดึง longitude
+
+          if (lat != null && lng != null) {
+            setState(() {
+              // อัปเดต state variable
+              _currentGpsPosition = LatLng(lat.toDouble(), lng.toDouble()); 
+              debugPrint('GPS Updated: $_currentGpsPosition');
+            });
+          }
+        }
+      },
+      onError: (error) {
+        debugPrint("Error listening to GPS position: $error");
       },
     );
   }
@@ -514,7 +544,9 @@ class _DashboardScreenState extends State<DashboardScreen> {
                   ),
                   ModernCard(
                     title: 'GPS Smart Farm',
-                    subtitle: 'ดูตำแหน่งแปลงเกษตร',
+                    // 💡 แสดงพิกัดย่อๆ ที่ถูกอัปเดต
+                    subtitle: 
+                      'พิกัด: ${_currentGpsPosition.latitude.toStringAsFixed(4)}, ${_currentGpsPosition.longitude.toStringAsFixed(4)}',
                     icon: FontAwesomeIcons.locationDot,
                     gradientColors: const [
                       Color.fromARGB(255, 252, 231, 179),
@@ -525,7 +557,8 @@ class _DashboardScreenState extends State<DashboardScreen> {
                         context,
                         MaterialPageRoute(
                           builder: (_) => GPSPage(
-                            position: gpsPosition,
+                            // 3. ส่งค่า state variable ที่อัปเดตแล้ว
+                            position: _currentGpsPosition, 
                             fontSize: fontSize,
                           ),
                         ),
