@@ -33,9 +33,9 @@ class _PumpPageState extends State<PumpPage> {
   StreamSubscription<DatabaseEvent>? _tankCapacitySubscription;
   StreamSubscription<DatabaseEvent>? _floatSwitchSubscription;
   StreamSubscription<DocumentSnapshot<Map<String, dynamic>>>?
-      _pumpStatusSubscription;
+  _pumpStatusSubscription;
   StreamSubscription<QuerySnapshot<Map<String, dynamic>>>?
-      _waterHistorySubscription;
+  _waterHistorySubscription;
 
   @override
   void initState() {
@@ -90,22 +90,27 @@ class _PumpPageState extends State<PumpPage> {
         .collection('devices')
         .doc('pump')
         .snapshots()
-        .listen((snapshot) {
-      if (snapshot.exists) {
-        final data = snapshot.data();
-        if (data != null) {
-          _safeSetState(() {
-            pumpOn = data['status'] == 'on';
-            auto = data['autoMode'] ?? false;
-          });
-        }
-      }
-    }, onError: (error) {
-      debugPrint("Error listening to pump status: $error");
-      ScaffoldMessenger.of(context).showSnackBar(
-        SnackBar(content: Text('เกิดข้อผิดพลาดในการเชื่อมต่อสถานะปั๊ม: $error')),
-      );
-    });
+        .listen(
+          (snapshot) {
+            if (snapshot.exists) {
+              final data = snapshot.data();
+              if (data != null) {
+                _safeSetState(() {
+                  pumpOn = data['status'] == 'on';
+                  auto = data['autoMode'] ?? false;
+                });
+              }
+            }
+          },
+          onError: (error) {
+            debugPrint("Error listening to pump status: $error");
+            ScaffoldMessenger.of(context).showSnackBar(
+              SnackBar(
+                content: Text('เกิดข้อผิดพลาดในการเชื่อมต่อสถานะปั๊ม: $error'),
+              ),
+            );
+          },
+        );
   }
 
   void _listenToWaterHistory() {
@@ -115,69 +120,83 @@ class _PumpPageState extends State<PumpPage> {
         .collection('history')
         .orderBy('timestamp', descending: true)
         .snapshots()
-        .listen((snapshot) {
-      _safeSetState(() {
-        waterHistory = snapshot.docs.map((doc) => doc.data()).toList();
-      });
-    }, onError: (error) {
-      debugPrint("Error listening to water history: $error");
-      ScaffoldMessenger.of(context).showSnackBar(
-        SnackBar(content: Text('เกิดข้อผิดพลาดในการโหลดประวัติ: $error')),
-      );
-    });
+        .listen(
+          (snapshot) {
+            _safeSetState(() {
+              waterHistory = snapshot.docs.map((doc) => doc.data()).toList();
+            });
+          },
+          onError: (error) {
+            debugPrint("Error listening to water history: $error");
+            ScaffoldMessenger.of(context).showSnackBar(
+              SnackBar(content: Text('เกิดข้อผิดพลาดในการโหลดประวัติ: $error')),
+            );
+          },
+        );
   }
 
   void _listenToWaterLevel() {
     final waterLevelRef = _database.ref('devices/pump/waterLevel');
-    _waterLevelSubscription = waterLevelRef.onValue.listen((event) {
-      final data = event.snapshot.value;
-      if (data != null) {
-        double? parsed;
-        if (data is num) parsed = data.toDouble();
-        if (data is String) parsed = double.tryParse(data);
-        if (parsed != null) {
-          _safeSetState(() => waterLevel = parsed!);
+    _waterLevelSubscription = waterLevelRef.onValue.listen(
+      (event) {
+        final data = event.snapshot.value;
+        if (data != null) {
+          double? parsed;
+          if (data is num) parsed = data.toDouble();
+          if (data is String) parsed = double.tryParse(data);
+          if (parsed != null) {
+            _safeSetState(() => waterLevel = parsed!);
+          } else {
+            debugPrint("Warning: Could not parse water level: $data");
+            _safeSetState(() => waterLevel = 0.0);
+          }
         } else {
-          debugPrint("Warning: Could not parse water level: $data");
           _safeSetState(() => waterLevel = 0.0);
         }
-      } else {
-        _safeSetState(() => waterLevel = 0.0);
-      }
-    }, onError: (error) {
-      debugPrint("Error listening to water level: $error");
-      ScaffoldMessenger.of(context).showSnackBar(
-        SnackBar(content: Text('เกิดข้อผิดพลาดในการเชื่อมต่อระดับน้ำ: $error')),
-      );
-    });
+      },
+      onError: (error) {
+        debugPrint("Error listening to water level: $error");
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(
+            content: Text('เกิดข้อผิดพลาดในการเชื่อมต่อระดับน้ำ: $error'),
+          ),
+        );
+      },
+    );
   }
 
   void _listenToTankCapacity() {
     final capRef = _database.ref('devices/pump/tankCapacity');
-    _tankCapacitySubscription = capRef.onValue.listen((event) {
-      final v = event.snapshot.value;
-      double? cap;
-      if (v is num) cap = v.toDouble();
-      if (v is String) cap = double.tryParse(v);
-      if (cap != null && cap > 0) {
-        _safeSetState(() => tankCapacity = cap!);
-      }
-    }, onError: (error) {
-      debugPrint("Error listening to tankCapacity: $error");
-    });
+    _tankCapacitySubscription = capRef.onValue.listen(
+      (event) {
+        final v = event.snapshot.value;
+        double? cap;
+        if (v is num) cap = v.toDouble();
+        if (v is String) cap = double.tryParse(v);
+        if (cap != null && cap > 0) {
+          _safeSetState(() => tankCapacity = cap!);
+        }
+      },
+      onError: (error) {
+        debugPrint("Error listening to tankCapacity: $error");
+      },
+    );
   }
 
   // <<< จุดสำคัญ: ฟัง floatSwitchState และพาร์สให้ชัดเจน >>>
   void _listenToFloatSwitch() {
     final ref = _database.ref('devices/pump/floatSwitchState');
-    _floatSwitchSubscription = ref.onValue.listen((event) {
-      final raw = event.snapshot.value;
-      debugPrint('floatSwitchState raw: $raw (${raw.runtimeType})');
-      final next = _parseBool(raw);
-      _safeSetState(() => floatSwitchOn = next);
-    }, onError: (e) {
-      debugPrint('FloatSwitch listener error: $e');
-    });
+    _floatSwitchSubscription = ref.onValue.listen(
+      (event) {
+        final raw = event.snapshot.value;
+        debugPrint('floatSwitchState raw: $raw (${raw.runtimeType})');
+        final next = _parseBool(raw);
+        _safeSetState(() => floatSwitchOn = next);
+      },
+      onError: (e) {
+        debugPrint('FloatSwitch listener error: $e');
+      },
+    );
   }
 
   // ---------- Actions ----------
@@ -225,7 +244,9 @@ class _PumpPageState extends State<PumpPage> {
       if (auto) await _addWaterHistory('Auto');
 
       ScaffoldMessenger.of(context).showSnackBar(
-        SnackBar(content: Text('โหมดอัตโนมัติถูก ${auto ? "เปิด" : "ปิด"} แล้ว')),
+        SnackBar(
+          content: Text('โหมดอัตโนมัติถูก ${auto ? "เปิด" : "ปิด"} แล้ว'),
+        ),
       );
     } catch (e) {
       debugPrint("Error updating auto mode: $e");
@@ -272,17 +293,24 @@ class _PumpPageState extends State<PumpPage> {
     showDialog(
       context: context,
       builder: (context) => AlertDialog(
-        title: const Text('ล้างประวัติ', style: TextStyle(fontFamily: 'Prompt')),
-        content: const Text('ต้องการล้างประวัติการเติมน้ำทั้งหมดหรือไม่?',
-            style: TextStyle(fontFamily: 'Prompt')),
+        title: const Text(
+          'ล้างประวัติ',
+          style: TextStyle(fontFamily: 'Prompt'),
+        ),
+        content: const Text(
+          'ต้องการล้างประวัติการเติมน้ำทั้งหมดหรือไม่?',
+          style: TextStyle(fontFamily: 'Prompt'),
+        ),
         actions: [
           TextButton(
             child: const Text('ยกเลิก', style: TextStyle(fontFamily: 'Prompt')),
             onPressed: () => Navigator.pop(context),
           ),
           TextButton(
-            child: const Text('ล้าง',
-                style: TextStyle(color: Colors.red, fontFamily: 'Prompt')),
+            child: const Text(
+              'ล้าง',
+              style: TextStyle(color: Colors.red, fontFamily: 'Prompt'),
+            ),
             onPressed: () async {
               try {
                 final historySnapshot = await _firestore
@@ -364,7 +392,9 @@ class _PumpPageState extends State<PumpPage> {
                         borderRadius: BorderRadius.circular(20),
                       ),
                       padding: const EdgeInsets.symmetric(
-                          vertical: 8, horizontal: 16),
+                        vertical: 8,
+                        horizontal: 16,
+                      ),
                     ),
                     child: Text(
                       'ล้างประวัติ',
@@ -469,7 +499,7 @@ class _PumpPageState extends State<PumpPage> {
               ),
               Switch(
                 value: pumpOn,
-                activeColor: Colors.green,
+                activeThumbColor: Colors.green,
                 onChanged: togglePump,
               ),
             ],
@@ -509,7 +539,7 @@ class _PumpPageState extends State<PumpPage> {
               ),
               Switch(
                 value: auto,
-                activeColor: Colors.green,
+                activeThumbColor: Colors.green,
                 onChanged: (_) => toggleAuto(),
               ),
             ],
@@ -560,7 +590,7 @@ class _PumpPageState extends State<PumpPage> {
             IgnorePointer(
               child: Switch(
                 value: floatSwitchOn,
-                activeColor: Colors.green,
+                activeThumbColor: Colors.green,
                 onChanged: (_) {},
               ),
             ),

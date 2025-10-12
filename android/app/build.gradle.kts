@@ -24,7 +24,7 @@ android {
 
     defaultConfig {
         applicationId = "com.example.endproject"
-        minSdk = 23 
+        minSdk = flutter.minSdkVersion 
         targetSdk = flutter.targetSdkVersion
         versionCode = flutter.versionCode
         versionName = flutter.versionName

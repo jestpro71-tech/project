@@ -26,9 +26,11 @@ class SprinklerPage extends StatefulWidget {
 class _SprinklerPageState extends State<SprinklerPage> {
   late bool sprinklerOn;
   late bool autoMode;
-  List<Map<String, dynamic>> history = []; // เปลี่ยนเป็น List ธรรมดา เพราะจะดึงจาก Firestore
+  List<Map<String, dynamic>> history =
+      []; // เปลี่ยนเป็น List ธรรมดา เพราะจะดึงจาก Firestore
 
-  final FirebaseFirestore _firestore = FirebaseFirestore.instance; // สร้าง instance ของ Firestore
+  final FirebaseFirestore _firestore =
+      FirebaseFirestore.instance; // สร้าง instance ของ Firestore
 
   @override
   void initState() {
@@ -45,22 +47,33 @@ class _SprinklerPageState extends State<SprinklerPage> {
 
   // ฟังก์ชันสำหรับฟังการเปลี่ยนแปลงสถานะสถานะสปริงเกอร์จาก Firestore
   void _listenToSprinklerStatus() {
-    _firestore.collection('devices').doc('sprinkler').snapshots().listen((snapshot) {
-      if (snapshot.exists) {
-        final data = snapshot.data();
-        if (data != null) {
-          setState(() {
-            sprinklerOn = data['status'] == 'on';
-            autoMode = data['autoMode'] ?? false;
-          });
-        }
-      }
-    }, onError: (error) {
-      print("Error listening to sprinkler status: $error");
-      ScaffoldMessenger.of(context).showSnackBar(
-        SnackBar(content: Text('เกิดข้อผิดพลาดในการเชื่อมต่อกับ Firebase: $error')),
-      );
-    });
+    _firestore
+        .collection('devices')
+        .doc('sprinkler')
+        .snapshots()
+        .listen(
+          (snapshot) {
+            if (snapshot.exists) {
+              final data = snapshot.data();
+              if (data != null) {
+                setState(() {
+                  sprinklerOn = data['status'] == 'on';
+                  autoMode = data['autoMode'] ?? false;
+                });
+              }
+            }
+          },
+          onError: (error) {
+            print("Error listening to sprinkler status: $error");
+            ScaffoldMessenger.of(context).showSnackBar(
+              SnackBar(
+                content: Text(
+                  'เกิดข้อผิดพลาดในการเชื่อมต่อกับ Firebase: $error',
+                ),
+              ),
+            );
+          },
+        );
   }
 
   // ฟังก์ชันสำหรับฟังการเปลี่ยนแปลงประวัติการทำงานสปริงเกอร์จาก Firestore
@@ -72,23 +85,31 @@ class _SprinklerPageState extends State<SprinklerPage> {
         .orderBy('timestamp', descending: true) // เรียงลำดับตามเวลาล่าสุด
         .limit(10) // จำกัดจำนวนประวัติที่แสดง
         .snapshots()
-        .listen((snapshot) {
-      setState(() {
-        history = snapshot.docs.map((doc) => doc.data()).toList();
-      });
-    }, onError: (error) {
-      print("Error listening to sprinkler history: $error");
-      ScaffoldMessenger.of(context).showSnackBar(
-        SnackBar(content: Text('เกิดข้อผิดพลาดในการโหลดประวัติสปริงเกอร์: $error')),
-      );
-    });
+        .listen(
+          (snapshot) {
+            setState(() {
+              history = snapshot.docs.map((doc) => doc.data()).toList();
+            });
+          },
+          onError: (error) {
+            print("Error listening to sprinkler history: $error");
+            ScaffoldMessenger.of(context).showSnackBar(
+              SnackBar(
+                content: Text(
+                  'เกิดข้อผิดพลาดในการโหลดประวัติสปริงเกอร์: $error',
+                ),
+              ),
+            );
+          },
+        );
   }
 
   // ฟังก์ชันสำหรับสลับสถานะสปริงเกอร์และอัปเดต Firestore
   Future<void> toggleSprinkler(bool value) async {
     setState(() {
       sprinklerOn = value;
-      if (sprinklerOn && autoMode) { // แก้ไขจาก pumpOn เป็น sprinklerOn
+      if (sprinklerOn && autoMode) {
+        // แก้ไขจาก pumpOn เป็น sprinklerOn
         autoMode = false;
       }
     });
@@ -137,7 +158,9 @@ class _SprinklerPageState extends State<SprinklerPage> {
         _addHistory('Auto');
       }
       ScaffoldMessenger.of(context).showSnackBar(
-        SnackBar(content: Text('โหมดอัตโนมัติถูก ${autoMode ? "เปิด" : "ปิด"} แล้ว')),
+        SnackBar(
+          content: Text('โหมดอัตโนมัติถูก ${autoMode ? "เปิด" : "ปิด"} แล้ว'),
+        ),
       );
     } catch (e) {
       print("Error updating auto mode: $e");
@@ -156,18 +179,23 @@ class _SprinklerPageState extends State<SprinklerPage> {
     final item = {
       'tray': mode == 'Auto' ? 'ถาด 1,2,3' : 'Manual',
       'time': '${now.hour}:${now.minute.toString().padLeft(2, '0')} น. ($mode)',
-      'timestamp': FieldValue.serverTimestamp(), // เพิ่ม timestamp สำหรับการเรียงลำดับ
+      'timestamp':
+          FieldValue.serverTimestamp(), // เพิ่ม timestamp สำหรับการเรียงลำดับ
     };
 
     try {
-      await _firestore.collection('devices').doc('sprinkler').collection('history').add(item);
+      await _firestore
+          .collection('devices')
+          .doc('sprinkler')
+          .collection('history')
+          .add(item);
       // ไม่ต้อง setState history ตรงๆ แล้ว เพราะ _listenToSprinklerHistory จะอัปเดตให้เอง
       // ไม่ต้องเรียก widget.onUpdateHistory(history) แล้ว เพราะข้อมูลจะถูกดึงจาก Firestore โดยตรง
     } catch (e) {
       print("Error adding history to Firestore: $e");
-      ScaffoldMessenger.of(context).showSnackBar(
-        SnackBar(content: Text('ไม่สามารถบันทึกประวัติได้: $e')),
-      );
+      ScaffoldMessenger.of(
+        context,
+      ).showSnackBar(SnackBar(content: Text('ไม่สามารถบันทึกประวัติได้: $e')));
     }
   }
 
@@ -176,7 +204,10 @@ class _SprinklerPageState extends State<SprinklerPage> {
     showDialog(
       context: context,
       builder: (context) => AlertDialog(
-        title: const Text('ล้างประวัติ', style: TextStyle(fontFamily: 'Prompt')),
+        title: const Text(
+          'ล้างประวัติ',
+          style: TextStyle(fontFamily: 'Prompt'),
+        ),
         content: const Text(
           'ต้องการล้างประวัติการทำงานสปริงเกอร์ทั้งหมดหรือไม่?',
           style: TextStyle(fontFamily: 'Prompt'),
@@ -187,11 +218,18 @@ class _SprinklerPageState extends State<SprinklerPage> {
             onPressed: () => Navigator.pop(context),
           ),
           TextButton(
-            child: const Text('ล้าง', style: TextStyle(color: Colors.red, fontFamily: 'Prompt')),
+            child: const Text(
+              'ล้าง',
+              style: TextStyle(color: Colors.red, fontFamily: 'Prompt'),
+            ),
             onPressed: () async {
               try {
                 // ลบเอกสารทั้งหมดใน subcollection 'history'
-                final historySnapshot = await _firestore.collection('devices').doc('sprinkler').collection('history').get();
+                final historySnapshot = await _firestore
+                    .collection('devices')
+                    .doc('sprinkler')
+                    .collection('history')
+                    .get();
                 for (DocumentSnapshot doc in historySnapshot.docs) {
                   await doc.reference.delete();
                 }
@@ -287,7 +325,7 @@ class _SprinklerPageState extends State<SprinklerPage> {
               ),
               Switch(
                 value: sprinklerOn,
-                activeColor: Colors.orange.shade700,
+                activeThumbColor: Colors.orange.shade700,
                 onChanged: toggleSprinkler,
               ),
             ],
@@ -327,7 +365,7 @@ class _SprinklerPageState extends State<SprinklerPage> {
               ),
               Switch(
                 value: autoMode,
-                activeColor: Colors.orange.shade700,
+                activeThumbColor: Colors.orange.shade700,
                 onChanged: (_) => toggleAutoMode(),
               ),
             ],
