@@ -16,7 +16,12 @@ class MyApp extends StatelessWidget {
   Widget build(BuildContext context) {
     return MaterialApp(
       title: 'Smart Farm',
-      theme: ThemeData(useMaterial3: true, colorSchemeSeed: Colors.green),
+      theme: ThemeData(
+        useMaterial3: true, 
+        colorSchemeSeed: Colors.green,
+        // 💡 เพิ่มบรรทัดนี้เพื่อตั้งค่าฟอนต์ Prompt เป็นค่าเริ่มต้น
+        fontFamily: 'Prompt', 
+      ),
       home: const DashboardScreen(), // เรียกใช้ DashboardScreen ที่แยกออกมา
       debugShowCheckedModeBanner: false,
     );

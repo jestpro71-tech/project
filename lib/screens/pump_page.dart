@@ -33,9 +33,9 @@ class _PumpPageState extends State<PumpPage> {
   StreamSubscription<DatabaseEvent>? _tankCapacitySubscription;
   StreamSubscription<DatabaseEvent>? _floatSwitchSubscription;
   StreamSubscription<DocumentSnapshot<Map<String, dynamic>>>?
-  _pumpStatusSubscription;
+      _pumpStatusSubscription;
   StreamSubscription<QuerySnapshot<Map<String, dynamic>>>?
-  _waterHistorySubscription;
+      _waterHistorySubscription;
 
   @override
   void initState() {
@@ -499,7 +499,8 @@ class _PumpPageState extends State<PumpPage> {
               ),
               Switch(
                 value: pumpOn,
-                activeThumbColor: Colors.green,
+                // แก้ไข: เปลี่ยน activeThumbColor เป็น activeColor
+                activeColor: Colors.green, 
                 onChanged: togglePump,
               ),
             ],
@@ -539,7 +540,8 @@ class _PumpPageState extends State<PumpPage> {
               ),
               Switch(
                 value: auto,
-                activeThumbColor: Colors.green,
+                // แก้ไข: เปลี่ยน activeThumbColor เป็น activeColor
+                activeColor: Colors.green,
                 onChanged: (_) => toggleAuto(),
               ),
             ],
@@ -590,7 +592,8 @@ class _PumpPageState extends State<PumpPage> {
             IgnorePointer(
               child: Switch(
                 value: floatSwitchOn,
-                activeThumbColor: Colors.green,
+                // แก้ไข: เปลี่ยน activeThumbColor เป็น activeColor
+                activeColor: Colors.green,
                 onChanged: (_) {},
               ),
             ),

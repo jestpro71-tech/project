@@ -14,6 +14,7 @@ import 'package:font_awesome_flutter/font_awesome_flutter.dart';
 import 'package:endproject/screens/pump_detail_page.dart';
 import 'package:endproject/screens/sprinkler_detail_page.dart';
 import 'package:endproject/screens/sensor_detail_page.dart';
+import 'package:endproject/screens/weather_page.dart';
 
 import 'package:firebase_core/firebase_core.dart';
 import 'package:firebase_database/firebase_database.dart';
@@ -39,7 +40,8 @@ class _DashboardScreenState extends State<DashboardScreen> {
 
   // Stream Subscriptions
   StreamSubscription<DatabaseEvent>? _waterLevelSubscription;
-  StreamSubscription<DatabaseEvent>? _gpsSubscription; // Subscription สำหรับ GPS
+  StreamSubscription<DatabaseEvent>?
+      _gpsSubscription; // Subscription สำหรับ GPS
 
   bool pumpOn = false;
   bool pumpAuto = true;
@@ -48,10 +50,10 @@ class _DashboardScreenState extends State<DashboardScreen> {
 
   // จะถูกอัปเดตจาก Firebase
   double waterLevel = 0.0;
-  
+
   // เปลี่ยนชื่อตัวแปรเพื่อความชัดเจนขึ้น
   // กำหนดค่าเริ่มต้นเป็น LatLng ของเชียงใหม่ (หรือพิกัดตั้งต้นที่ต้องการ)
-  LatLng _currentGpsPosition = const LatLng(18.7953, 98.9986); 
+  LatLng _currentGpsPosition = const LatLng(18.7953, 98.9986);
 
   String date = '', time = '';
   Timer? timer;
@@ -82,7 +84,7 @@ class _DashboardScreenState extends State<DashboardScreen> {
       fetchSoilData();
       fetchPumpStatus();
       fetchSprinklerStatus();
-      // controlAutoPump(); 
+      // controlAutoPump();
       controlAutoSprinkler();
     });
   }
@@ -133,7 +135,7 @@ class _DashboardScreenState extends State<DashboardScreen> {
   // Firebase Listener สำหรับ GPS
   void _listenToGPSPosition() {
     // สมมติว่าโครงสร้างใน Firebase คือ devices/gps และมี child เป็น latitude กับ longitude
-    final gpsRef = _database.ref('devices/gps'); 
+    final gpsRef = _database.ref('devices/gps');
 
     _gpsSubscription = gpsRef.onValue.listen(
       (event) {
@@ -145,7 +147,7 @@ class _DashboardScreenState extends State<DashboardScreen> {
           if (lat != null && lng != null) {
             setState(() {
               // อัปเดต state variable
-              _currentGpsPosition = LatLng(lat.toDouble(), lng.toDouble()); 
+              _currentGpsPosition = LatLng(lat.toDouble(), lng.toDouble());
               debugPrint('GPS Updated: $_currentGpsPosition');
             });
           }
@@ -373,10 +375,12 @@ class _DashboardScreenState extends State<DashboardScreen> {
                 crossAxisSpacing: 20,
                 childAspectRatio: 0.9,
                 children: [
+                  // --- 1. ความชื้นในดิน (Soil Moisture) ---
                   ModernCard(
                     title: 'ความชื้นในดิน',
                     subtitle: 'ตรวจสอบค่าความชื้น',
                     icon: FontAwesomeIcons.droplet,
+                    iconColor: Colors.teal.shade700, // <--- กำหนดสี ICON
                     gradientColors: const [
                       Color.fromARGB(255, 155, 235, 173),
                       Color.fromARGB(255, 54, 249, 103),
@@ -400,11 +404,13 @@ class _DashboardScreenState extends State<DashboardScreen> {
                     titleFontSize: fontSize + 2,
                     subtitleFontSize: fontSize - 2,
                   ),
+                  // --- 2. ปั๊มน้ำ (Water Pump) ---
                   ModernCard(
                     title: 'ปั๊มน้ำ',
                     // แสดงระดับน้ำที่ดึงมาจาก Firebase
                     subtitle: 'ระดับน้ำ: ${waterLevel.toStringAsFixed(1)} ลิตร',
                     icon: FontAwesomeIcons.water,
+                    iconColor: Colors.blue.shade700, // <--- กำหนดสี ICON
                     gradientColors: const [
                       Color.fromARGB(255, 159, 192, 255),
                       Color.fromARGB(255, 94, 207, 255),
@@ -413,19 +419,19 @@ class _DashboardScreenState extends State<DashboardScreen> {
                       Navigator.push(
                         context,
                         MaterialPageRoute(
-                          builder: (_) => PumpPage(
-                            fontSize: 16.0,
-                          ),
+                          builder: (_) => PumpPage(fontSize: 16.0),
                         ),
                       );
                     },
                     titleFontSize: fontSize + 2,
                     subtitleFontSize: fontSize - 2,
                   ),
+                  // --- 3. สปริงเกอร์ (Sprinkler) ---
                   ModernCard(
                     title: 'สปริงเกอร์',
                     subtitle: sprinklerOn ? 'กำลังรดน้ำ' : 'ปิดอยู่',
                     icon: FontAwesomeIcons.seedling,
+                    iconColor: Colors.orange.shade800, // <--- กำหนดสี ICON
                     gradientColors: const [
                       Color.fromARGB(255, 241, 203, 146),
                       Color.fromARGB(255, 249, 121, 82),
@@ -456,10 +462,12 @@ class _DashboardScreenState extends State<DashboardScreen> {
                     titleFontSize: fontSize + 2,
                     subtitleFontSize: fontSize - 2,
                   ),
+                  // --- 4. อัตราการใช้ไฟฟ้า (Power Usage) ---
                   ModernCard(
                     title: 'อัตราการใช้ไฟฟ้า',
                     subtitle: 'เช็คพลังงาน',
                     icon: FontAwesomeIcons.bolt,
+                    iconColor: Colors.yellow.shade800, // <--- กำหนดสี ICON
                     gradientColors: const [
                       Color.fromARGB(255, 238, 218, 153),
                       Color.fromARGB(255, 246, 193, 70),
@@ -497,12 +505,12 @@ class _DashboardScreenState extends State<DashboardScreen> {
                                 'usageCountToday': 0,
                                 'icon': FontAwesomeIcons.droplet,
                                 'detailPage': () => const SensorDetailPage(
-                                  sensor: {
-                                    'name': 'เซนเซอร์ 1',
-                                    'watt': 0.3,
-                                    'value': 50.0,
-                                  },
-                                ),
+                                      sensor: {
+                                        'name': 'เซนเซอร์ 1',
+                                        'watt': 0.3,
+                                        'value': 50.0,
+                                      },
+                                    ),
                               },
                               {
                                 'name': 'เซนเซอร์ 2',
@@ -512,12 +520,12 @@ class _DashboardScreenState extends State<DashboardScreen> {
                                 'usageCountToday': 0,
                                 'icon': FontAwesomeIcons.droplet,
                                 'detailPage': () => const SensorDetailPage(
-                                  sensor: {
-                                    'name': 'เซนเซอร์ 2',
-                                    'watt': 0.3,
-                                    'value': 60.0,
-                                  },
-                                ),
+                                      sensor: {
+                                        'name': 'เซนเซอร์ 2',
+                                        'watt': 0.3,
+                                        'value': 60.0,
+                                      },
+                                    ),
                               },
                               {
                                 'name': 'เซนเซอร์ 3',
@@ -527,12 +535,12 @@ class _DashboardScreenState extends State<DashboardScreen> {
                                 'usageCountToday': 0,
                                 'icon': FontAwesomeIcons.droplet,
                                 'detailPage': () => const SensorDetailPage(
-                                  sensor: {
-                                    'name': 'เซนเซอร์ 3',
-                                    'watt': 0.3,
-                                    'value': 70.0,
-                                  },
-                                ),
+                                      sensor: {
+                                        'name': 'เซนเซอร์ 3',
+                                        'watt': 0.3,
+                                        'value': 70.0,
+                                      },
+                                    ),
                               },
                             ],
                           ),
@@ -542,12 +550,14 @@ class _DashboardScreenState extends State<DashboardScreen> {
                     titleFontSize: fontSize + 1,
                     subtitleFontSize: fontSize - 2,
                   ),
+                  // --- 5. GPS Smart Farm ---
                   ModernCard(
                     title: 'GPS Smart Farm',
                     // 💡 แสดงพิกัดย่อๆ ที่ถูกอัปเดต
-                    subtitle: 
-                      'พิกัด: ${_currentGpsPosition.latitude.toStringAsFixed(4)}, ${_currentGpsPosition.longitude.toStringAsFixed(4)}',
+                    subtitle:
+                        'พิกัด: ${_currentGpsPosition.latitude.toStringAsFixed(4)}, ${_currentGpsPosition.longitude.toStringAsFixed(4)}',
                     icon: FontAwesomeIcons.locationDot,
+                    iconColor: Colors.red.shade700, // <--- กำหนดสี ICON
                     gradientColors: const [
                       Color.fromARGB(255, 252, 231, 179),
                       Color.fromARGB(255, 246, 174, 41),
@@ -558,13 +568,45 @@ class _DashboardScreenState extends State<DashboardScreen> {
                         MaterialPageRoute(
                           builder: (_) => GPSPage(
                             // 3. ส่งค่า state variable ที่อัปเดตแล้ว
-                            position: _currentGpsPosition, 
+                            position: _currentGpsPosition,
                             fontSize: fontSize,
                           ),
                         ),
                       );
                     },
                     titleFontSize: fontSize + 1,
+                    subtitleFontSize: fontSize - 2,
+                  ),
+                  // --- 6. สภาพอากาศ (Weather) ---
+                  ModernCard(
+                    title: 'สภาพอากาศ',
+                    // สามารถแสดงอุณหภูมิปัจจุบัน หรือคำบรรยายสภาพอากาศย่อๆ
+                    subtitle: 'ตรวจสอบสภาพอากาศ',
+                    icon: FontAwesomeIcons.cloudSun, // ใช้ไอคอนที่เหมาะสม
+                    iconColor: Colors.lightBlue.shade700, // <--- กำหนดสี ICON
+                    gradientColors: const [
+                      Color.fromARGB(
+                        255,
+                        179,
+                        219,
+                        252,
+                      ), // โทนสีฟ้า/ขาว สำหรับอากาศ
+                      Color.fromARGB(255, 137, 187, 240),
+                    ],
+                    onTap: () {
+                      Navigator.push(
+                        context,
+                        MaterialPageRoute(
+                          // 💡 เราจะสร้างหน้านี้ในขั้นตอนถัดไป
+                          builder: (_) => WeatherPage(
+                            latitude: _currentGpsPosition.latitude,
+                            longitude: _currentGpsPosition.longitude,
+                            fontSize: fontSize,
+                          ),
+                        ),
+                      );
+                    },
+                    titleFontSize: fontSize + 2,
                     subtitleFontSize: fontSize - 2,
                   ),
                 ],

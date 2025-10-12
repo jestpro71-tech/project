@@ -6,8 +6,9 @@ class ModernCard extends StatelessWidget {
   final IconData icon;
   final List<Color> gradientColors;
   final VoidCallback onTap;
-  final double titleFontSize;    // เพิ่ม property สำหรับขนาด font ของ title
-  final double subtitleFontSize; // เพิ่ม property สำหรับขนาด font ของ subtitle
+  final double titleFontSize;
+  final double subtitleFontSize;
+  final Color iconColor; // *เพิ่มพารามิเตอร์ iconColor ที่หายไป*
 
   const ModernCard({
     super.key,
@@ -16,8 +17,9 @@ class ModernCard extends StatelessWidget {
     required this.icon,
     required this.gradientColors,
     required this.onTap,
-    this.titleFontSize = 18,    // กำหนดค่า default ถ้าไม่ถูกส่งมา
-    this.subtitleFontSize = 13, // กำหนดค่า default ถ้าไม่ถูกส่งมา
+    this.titleFontSize = 18,
+    this.subtitleFontSize = 13,
+    this.iconColor = Colors.black87, // *กำหนดค่า default*
   });
 
   @override
@@ -56,14 +58,13 @@ class ModernCard extends StatelessWidget {
                 child: Icon(
                   icon,
                   size: 40,
-                  color: Colors.black87, // ใช้สีไอคอนตามธีมได้
+                  color: iconColor, // *ใช้พารามิเตอร์ iconColor ที่รับเข้ามา*
                 ),
               ),
 
               const SizedBox(height: 16),
 
               // หัวข้อใหญ่ (Title) - ใช้ Expanded เพื่อให้ Text ยืดหยุ่น
-              // เพิ่ม Expanded, maxLines, และ overflow เพื่อป้องกันข้อความล้น
               Expanded(
                 child: Text(
                   title,
@@ -83,7 +84,6 @@ class ModernCard extends StatelessWidget {
 
               // หัวข้อย่อย (Subtitle) - ใช้ Expanded เพื่อให้ Text ยืดหยุ่น
               if (subtitle != null) ...[
-                // เพิ่ม Expanded, maxLines, และ overflow เพื่อป้องกันข้อความล้น
                 Expanded(
                   child: Text(
                     subtitle!,
