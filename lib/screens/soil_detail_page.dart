@@ -45,7 +45,10 @@ class _SoilDetailPageUpdatedV2State extends State<SoilDetailPageUpdated> {
   late final FirebaseDatabase _database;
   static const String rtdbUrl =
       'https://project-41b3d-default-rtdb.asia-southeast1.firebasedatabase.app';
-  StreamSubscription<DatabaseEvent>? _soilMoistureSub;
+  
+  // ใช้ List เพื่อจัดการ StreamSubscription ทั้ง 12 ตัว
+  final List<StreamSubscription<DatabaseEvent>?> _soilMoistureSubs = 
+      List.filled(kSensorsPerTray, null); 
 
   @override
   void initState() {
@@ -54,52 +57,77 @@ class _SoilDetailPageUpdatedV2State extends State<SoilDetailPageUpdated> {
     // clone ค่าจาก parent แล้ว normalize เป็น 12 เซ็นเซอร์/ถาด
     traysCap = widget.traysCap.map((l) => _ensureLenDouble(l)).toList();
     traysRes = widget.traysRes.map((l) => _ensureLenDouble(l)).toList();
+    // ใช้ _ensureLenBool เพื่อให้สถานะเริ่มต้นของเซ็นเซอร์เป็น false
     traysStatus = widget.traysStatus.map((l) => _ensureLenBool(l)).toList();
     traysConnected = List<bool>.from(widget.traysConnected);
     if (traysCap.isEmpty) {
       traysCap = [List.filled(kSensorsPerTray, 0.0)];
       traysRes = [List.filled(kSensorsPerTray, 0.0)];
-      traysStatus = [List.filled(kSensorsPerTray, true)];
+      // ให้สถานะเริ่มต้นของเซ็นเซอร์เป็น false
+      traysStatus = [List.filled(kSensorsPerTray, false)]; 
       traysConnected = [true];
     }
 
+    // ต้องแน่ใจว่าได้เรียก Firebase.initializeApp() ไว้ก่อนหน้านี้ใน App แล้ว
     _database = FirebaseDatabase.instanceFor(
       app: Firebase.app(),
       databaseURL: rtdbUrl,
     );
 
     // โหลดจาก local แล้วฟังค่า RTDB
-    loadData().then((_) => _listenToSoilMoisture());
+    loadData().then((_) {
+      // วนลูปเพื่อเชื่อมต่อ Listener ทั้ง 12 ตัว (index 0 ถึง 11)
+      for (int i = 0; i < kSensorsPerTray; i++) {
+        _listenToSoilMoisture(i);
+      }
+    });
   }
 
   @override
   void dispose() {
-    _soilMoistureSub?.cancel();
+    // ยกเลิก Subscription ทั้งหมดใน List
+    for (final sub in _soilMoistureSubs) {
+      sub?.cancel();
+    }
     super.dispose();
   }
 
-  // --------- RTDB: ผูกเฉพาะเซ็นเซอร์ 1 (index 0) ----------
-  void _listenToSoilMoisture() {
-    final ref = _database.ref('devices/pump/soil/latest/');
-    _soilMoistureSub = ref.onValue.listen((event) {
-      final raw = event.snapshot.value;
+  // --------- NEW GENERIC RTDB LISTENER for Sensor (index 0 to 11) ----------
+  void _listenToSoilMoisture(int sensorIndex) {
+    // สร้าง Path ชื่อ 'soilMoisture1', 'soilMoisture2', ..., 'soilMoisture12'
+    final sensorName = 'soilMoisture${sensorIndex + 1}';
+    final ref = _database.ref('devices/soil/latest/$sensorName');
+    
+    _soilMoistureSubs[sensorIndex] = ref.onValue.listen((event) {
+      final raw = event.snapshot.value; 
       double? v;
-      if (raw is num) v = raw.toDouble();
-      if (raw is String) v = double.tryParse(raw);
+
+      // ตรวจสอบและแปลงค่าที่ถูกต้อง
+      if (raw is num) {
+        v = raw.toDouble();
+      } else if (raw is String) {
+        v = double.tryParse(raw);
+      } else {
+        debugPrint('$sensorName: Invalid data type received: ${raw.runtimeType}');
+      }
 
       if (v != null) {
-        final val = v.clamp(0, 100).toDouble();
+        final val = v.clamp(0.0, 100.0).toDouble();
         setState(() {
+          // อัปเดตทุกถาดที่ index ปัจจุบัน (sensorIndex)
           for (int t = 0; t < traysRes.length; t++) {
-            traysRes[t][0] = val; // <-- อัปเดตเฉพาะเซ็นเซอร์ 1
-            // ที่เหลือ index 1..11 คงไว้ (mockup), เริ่มต้นคือ 0.0
+            traysRes[t][sensorIndex] = val; 
+            // อัปเดตสถานะเป็น true เมื่อได้รับค่า > 0.0
+            traysStatus[t][sensorIndex] = (val > 0.0);
           }
         });
+        saveData(); // บันทึกสถานะใหม่
       }
     }, onError: (e) {
-      debugPrint('SoilMoisture listener error: $e');
+      debugPrint('$sensorName listener error: $e');
     });
   }
+  // ----------------------------------------------------
 
   // ---------- Local storage ----------
   Future<void> loadData() async {
@@ -122,16 +150,26 @@ class _SoilDetailPageUpdatedV2State extends State<SoilDetailPageUpdated> {
           : traysRes;
       traysStatus = savedStatus != null
           ? (jsonDecode(savedStatus) as List)
-              .map<List<bool>>((t) => _ensureLenBool(List<bool>.from(t)))
+              // โหลดสถานะและปรับให้เป็น false ถ้าค่าความชื้นเป็น 0.0
+              .map<List<bool>>((t) {
+                final loadedStatus = List<bool>.from(t);
+                final trayIndex = (jsonDecode(savedStatus) as List).indexOf(t);
+                final currentRes = traysRes.length > trayIndex ? traysRes[trayIndex] : List<double>.filled(kSensorsPerTray, 0.0);
+
+                return _ensureLenBool(
+                  List.generate(kSensorsPerTray, (i) => currentRes[i] > 0.0)
+                );
+              })
               .toList()
           : traysStatus;
+
       traysConnected = savedConnected != null
           ? List<bool>.from(jsonDecode(savedConnected))
           : traysConnected;
       if (traysCap.isEmpty) {
         traysCap = [List.filled(kSensorsPerTray, 0.0)];
         traysRes = [List.filled(kSensorsPerTray, 0.0)];
-        traysStatus = [List.filled(kSensorsPerTray, true)];
+        traysStatus = [List.filled(kSensorsPerTray, false)]; // ใช้ false
         traysConnected = [true];
       }
     });
@@ -149,7 +187,7 @@ class _SoilDetailPageUpdatedV2State extends State<SoilDetailPageUpdated> {
     setState(() {
       traysCap.add(List.filled(kSensorsPerTray, 0.0));
       traysRes.add(List.filled(kSensorsPerTray, 0.0));
-      traysStatus.add(List.filled(kSensorsPerTray, true));
+      traysStatus.add(List.filled(kSensorsPerTray, false)); // ใช้ false
       traysConnected.add(true);
     });
     saveData();
@@ -176,54 +214,36 @@ class _SoilDetailPageUpdatedV2State extends State<SoilDetailPageUpdated> {
   List<bool> _ensureLenBool(List<bool> src) {
     if (src.length == kSensorsPerTray) return List<bool>.from(src);
     if (src.length > kSensorsPerTray) return src.sublist(0, kSensorsPerTray);
+    // ค่าเริ่มต้นของสถานะเป็น false (ยังไม่ต่อ)
     return List<bool>.from(src)
-      ..addAll(List.filled(kSensorsPerTray - src.length, true));
+      ..addAll(List.filled(kSensorsPerTray - src.length, false));
   }
 
-  // ---------- UI ----------
-  @override
-  Widget build(BuildContext context) {
-    return Scaffold(
-      appBar: AppBar(
-        title: Text('ความชื้นในดิน',
-            style: TextStyle(
-                fontSize: widget.fontSize + 3, fontWeight: FontWeight.bold)),
-        centerTitle: true,
-        backgroundColor: Colors.teal.shade700,
-        actions: [
-          IconButton(
-              icon: const Icon(Icons.add),
-              tooltip: 'เพิ่มถาดความชื้น',
-              onPressed: addTray),
-        ],
-      ),
-      body: traysCap.isEmpty
-          ? const Center(child: CircularProgressIndicator())
-          : ListView.builder(
-              padding: const EdgeInsets.all(12),
-              itemCount: traysCap.length,
-              itemBuilder: (context, trayIndex) => buildTrayCard(trayIndex),
-            ),
-    );
-  }
-
-  // ---- Widget สำหรับแสดงค่าเฉลี่ย ----
+  // --- Widget สำหรับแสดงค่าเฉลี่ย ---
   Widget _buildAverageSection(int trayIndex) {
     final List<double> sensorValues = traysRes[trayIndex];
     final List<bool> sensorStatuses = traysStatus[trayIndex];
 
+    // ดึงค่าเซ็นเซอร์ที่มีค่าความชื้น > 0.0% มาคำนวณเท่านั้น
     final List<double> activeSensorValues = [];
-    for (int i = 0; i < sensorValues.length; i++) {
-      if (sensorStatuses[i]) {
+
+    // วนลูปตรวจสอบสถานะเซ็นเซอร์ทั้งหมด (ตั้งแต่ 1 ถึง 12)
+    for (int i = 0; i < kSensorsPerTray; i++) {
+      // ใช้เงื่อนไขที่เข้มงวด: ต้องมีค่า > 0.0 (ถึงแม้ว่า status จะเป็น true ก็ตาม)
+      if (sensorValues[i] > 0.0) { 
         activeSensorValues.add(sensorValues[i]);
       }
     }
 
     double average = 0.0;
     if (activeSensorValues.isNotEmpty) {
+      // คำนวณค่าเฉลี่ยตามจำนวนเซ็นเซอร์ที่ใช้งานจริง (มากกว่า 0.0%)
       average =
           activeSensorValues.reduce((a, b) => a + b) / activeSensorValues.length;
     }
+
+    // จำนวนเซ็นเซอร์ที่นับรวมในการเฉลี่ย
+    final int sensorsCounted = activeSensorValues.length;
 
     return Column(
       crossAxisAlignment: CrossAxisAlignment.start,
@@ -256,7 +276,8 @@ class _SoilDetailPageUpdatedV2State extends State<SoilDetailPageUpdated> {
                     ),
                   ),
                   Text(
-                    'จาก ${activeSensorValues.length} เซ็นเซอร์',
+                    // แสดงจำนวนเซ็นเซอร์ที่ใช้เฉลี่ย (ตามจำนวนที่ต่อจริง)
+                    'จาก $sensorsCounted เซ็นเซอร์ที่เชื่อมต่อ', 
                     style: TextStyle(
                       fontSize: widget.fontSize - 1,
                       color: Colors.grey.shade600,
@@ -280,6 +301,33 @@ class _SoilDetailPageUpdatedV2State extends State<SoilDetailPageUpdated> {
         const Divider(),
         const SizedBox(height: 12),
       ],
+    );
+  }
+
+  // ---------- UI ----------
+  @override
+  Widget build(BuildContext context) {
+    return Scaffold(
+      appBar: AppBar(
+        title: Text('ความชื้นในดิน',
+            style: TextStyle(
+                fontSize: widget.fontSize + 3, fontWeight: FontWeight.bold)),
+        centerTitle: true,
+        backgroundColor: Colors.teal.shade700,
+        actions: [
+          IconButton(
+              icon: const Icon(Icons.add),
+              tooltip: 'เพิ่มถาดความชื้น',
+              onPressed: addTray),
+        ],
+      ),
+      body: traysCap.isEmpty
+          ? const Center(child: CircularProgressIndicator())
+          : ListView.builder(
+              padding: const EdgeInsets.all(12),
+              itemCount: traysCap.length,
+              itemBuilder: (context, trayIndex) => buildTrayCard(trayIndex),
+            ),
     );
   }
 
@@ -321,8 +369,21 @@ class _SoilDetailPageUpdatedV2State extends State<SoilDetailPageUpdated> {
             ...List.generate(kSensorsPerTray, (sensorIndex) {
               final bool status = traysStatus[trayIndex][sensorIndex];
               final double resVal = traysRes[trayIndex][sensorIndex];
-              final String statusText = status ? '✅ ปกติ' : '❌ ขัดข้อง';
-              final Color statusColor = status ? Colors.green : Colors.red;
+              
+              // กำหนดสถานะตามค่าจริง
+              String statusText;
+              Color statusColor;
+
+              if (resVal > 0.0) { // เซ็นเซอร์ถือว่า 'ปกติ' และ 'ต่อแล้ว' ก็ต่อเมื่อมีค่า > 0.0
+                 statusText = '✅ ปกติ';
+                 statusColor = Colors.green;
+              } else if (status == false && resVal == 0.0) {
+                 statusText = '⏳ รอค่า';
+                 statusColor = Colors.amber;
+              } else {
+                 statusText = '❌ ขัดข้อง';
+                 statusColor = Colors.red;
+              }
 
               return Container(
                 margin: const EdgeInsets.symmetric(vertical: 8),
@@ -345,7 +406,7 @@ class _SoilDetailPageUpdatedV2State extends State<SoilDetailPageUpdated> {
                         CircleAvatar(
                           backgroundColor: statusColor.withOpacity(0.1),
                           child: Icon(
-                              status ? Icons.check_circle : Icons.error,
+                              (statusText == '✅ ปกติ') ? Icons.check_circle : (statusText == '⏳ รอค่า' ? Icons.access_time : Icons.error),
                               color: statusColor),
                         ),
                         const SizedBox(width: 12),

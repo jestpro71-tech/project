@@ -402,7 +402,8 @@ class _DashboardScreenState extends State<DashboardScreen> {
                       );
                     },
                     titleFontSize: fontSize + 2,
-                    subtitleFontSize: fontSize - 2,
+                    // 💡 แก้ไขขนาดตัวอักษรของ Subtitle ให้เล็กลง
+                    subtitleFontSize: fontSize - 4, 
                   ),
                   // --- 2. ปั๊มน้ำ (Water Pump) ---
                   ModernCard(
@@ -424,7 +425,8 @@ class _DashboardScreenState extends State<DashboardScreen> {
                       );
                     },
                     titleFontSize: fontSize + 2,
-                    subtitleFontSize: fontSize - 2,
+                    // 💡 แก้ไขขนาดตัวอักษรของ Subtitle ให้เล็กลง
+                    subtitleFontSize: fontSize - 4, 
                   ),
                   // --- 3. สปริงเกอร์ (Sprinkler) ---
                   ModernCard(
@@ -460,7 +462,8 @@ class _DashboardScreenState extends State<DashboardScreen> {
                       }
                     },
                     titleFontSize: fontSize + 2,
-                    subtitleFontSize: fontSize - 2,
+                    // 💡 แก้ไขขนาดตัวอักษรของ Subtitle ให้เล็กลง
+                    subtitleFontSize: fontSize - 4, 
                   ),
                   // --- 4. อัตราการใช้ไฟฟ้า (Power Usage) ---
                   ModernCard(
@@ -505,12 +508,11 @@ class _DashboardScreenState extends State<DashboardScreen> {
                                 'usageCountToday': 0,
                                 'icon': FontAwesomeIcons.droplet,
                                 'detailPage': () => const SensorDetailPage(
-                                      sensor: {
-                                        'name': 'เซนเซอร์ 1',
-                                        'watt': 0.3,
-                                        'value': 50.0,
-                                      },
-                                    ),
+                                    sensor: {
+                                      'name': 'เซนเซอร์ 1',
+                                      'watt': 0.3,
+                                      'value': 50.0,
+                                    }),
                               },
                               {
                                 'name': 'เซนเซอร์ 2',
@@ -520,12 +522,11 @@ class _DashboardScreenState extends State<DashboardScreen> {
                                 'usageCountToday': 0,
                                 'icon': FontAwesomeIcons.droplet,
                                 'detailPage': () => const SensorDetailPage(
-                                      sensor: {
-                                        'name': 'เซนเซอร์ 2',
-                                        'watt': 0.3,
-                                        'value': 60.0,
-                                      },
-                                    ),
+                                    sensor: {
+                                      'name': 'เซนเซอร์ 2',
+                                      'watt': 0.3,
+                                      'value': 60.0,
+                                    }),
                               },
                               {
                                 'name': 'เซนเซอร์ 3',
@@ -535,12 +536,11 @@ class _DashboardScreenState extends State<DashboardScreen> {
                                 'usageCountToday': 0,
                                 'icon': FontAwesomeIcons.droplet,
                                 'detailPage': () => const SensorDetailPage(
-                                      sensor: {
-                                        'name': 'เซนเซอร์ 3',
-                                        'watt': 0.3,
-                                        'value': 70.0,
-                                      },
-                                    ),
+                                    sensor: {
+                                      'name': 'เซนเซอร์ 3',
+                                      'watt': 0.3,
+                                      'value': 70.0,
+                                    }),
                               },
                             ],
                           ),
@@ -548,7 +548,8 @@ class _DashboardScreenState extends State<DashboardScreen> {
                       );
                     },
                     titleFontSize: fontSize + 1,
-                    subtitleFontSize: fontSize - 2,
+                    // 💡 แก้ไขขนาดตัวอักษรของ Subtitle ให้เล็กลง
+                    subtitleFontSize: fontSize - 4, 
                   ),
                   // --- 5. GPS Smart Farm ---
                   ModernCard(
@@ -575,7 +576,8 @@ class _DashboardScreenState extends State<DashboardScreen> {
                       );
                     },
                     titleFontSize: fontSize + 1,
-                    subtitleFontSize: fontSize - 2,
+                    // 💡 แก้ไขขนาดตัวอักษรของ Subtitle ให้เล็กลง
+                    subtitleFontSize: fontSize - 4, 
                   ),
                   // --- 6. สภาพอากาศ (Weather) ---
                   ModernCard(
@@ -597,7 +599,6 @@ class _DashboardScreenState extends State<DashboardScreen> {
                       Navigator.push(
                         context,
                         MaterialPageRoute(
-                          // 💡 เราจะสร้างหน้านี้ในขั้นตอนถัดไป
                           builder: (_) => WeatherPage(
                             latitude: _currentGpsPosition.latitude,
                             longitude: _currentGpsPosition.longitude,
@@ -607,7 +608,8 @@ class _DashboardScreenState extends State<DashboardScreen> {
                       );
                     },
                     titleFontSize: fontSize + 2,
-                    subtitleFontSize: fontSize - 2,
+                    // 💡 แก้ไขขนาดตัวอักษรของ Subtitle ให้เล็กลง
+                    subtitleFontSize: fontSize - 4, 
                   ),
                 ],
               ),

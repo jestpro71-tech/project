@@ -277,7 +277,7 @@ class _WeatherPageState extends State<WeatherPage> {
                             children: <Widget>[
                               // 1. Location (City Name)
                               Text(
-                                '📍 ${_cityName}',
+                                '📍 $_cityName',
                                 style: TextStyle(
                                   fontSize: widget.fontSize + 8,
                                   fontWeight: FontWeight.w800,
@@ -328,7 +328,7 @@ class _WeatherPageState extends State<WeatherPage> {
                                     _buildDetailCard(
                                       FontAwesomeIcons.droplet, 
                                       'ความชื้น', 
-                                      '${_humidity}%'
+                                      '$_humidity%'
                                     ),
                                     _buildDetailCard(
                                       FontAwesomeIcons.wind, 
