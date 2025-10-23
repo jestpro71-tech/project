@@ -326,7 +326,7 @@ class _SprinklerPageState extends State<SprinklerPage> {
               Switch(
                 value: sprinklerOn,
                 // แก้ไขจาก activeThumbColor เป็น activeColor เพื่อแก้ Error
-                activeColor: Colors.orange.shade700, 
+                activeThumbColor: Colors.orange.shade700,
                 onChanged: toggleSprinkler,
               ),
             ],
@@ -367,7 +367,7 @@ class _SprinklerPageState extends State<SprinklerPage> {
               Switch(
                 value: autoMode,
                 // แก้ไขจาก activeThumbColor เป็น activeColor เพื่อแก้ Error
-                activeColor: Colors.orange.shade700,
+                activeThumbColor: Colors.orange.shade700,
                 onChanged: (_) => toggleAutoMode(),
               ),
             ],
