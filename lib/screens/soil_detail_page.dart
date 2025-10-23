@@ -4,6 +4,7 @@ import 'package:flutter/material.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 import 'package:firebase_core/firebase_core.dart';
 import 'package:firebase_database/firebase_database.dart';
+import 'package:cloud_firestore/cloud_firestore.dart'; // <<< เพิ่ม: สำหรับสั่งควบคุมปั๊มน้ำ
 
 // --- คลาส StatefulWidget (ส่วนที่ 1) ---
 class SoilDetailPageUpdated extends StatefulWidget {
@@ -39,23 +40,25 @@ class _SoilDetailPageUpdatedV2State extends State<SoilDetailPageUpdated> {
   List<List<bool>> traysStatus = [];
   List<bool> traysConnected = [];
 
-  // RTDB
+  // Firebase Instances
   late final FirebaseDatabase _database;
+  final FirebaseFirestore _firestore = FirebaseFirestore.instance; // <<< เพิ่ม: Firestore Instance
   static const String rtdbUrl =
       'https://project-41b3d-default-rtdb.asia-southeast1.firebasedatabase.app';
 
-  // ใช้ List เพื่อจัดการ StreamSubscription (ใช้ index 0 ตัวเดียว)
   final List<StreamSubscription<DatabaseEvent>?> _soilMoistureSubs =
       List.filled(kSensorsPerTray, null);
 
-  // เพิ่มตัวแปรสถานะเพื่อระบุว่าโหลดข้อมูลครั้งแรกเสร็จแล้ว
   bool _isInitialDataLoaded = false;
+  
+  // ตัวแปรสำหรับควบคุมการสั่งงานปั๊มเพื่อป้องกันการสั่งซ้ำๆ ติดกัน
+  String _lastPumpStatus = 'unknown';
 
   @override
   void initState() {
     super.initState();
 
-    // 1. กำหนดค่าเริ่มต้นจาก Widget/ค่าว่าง (สำคัญมาก: เพื่อให้ UI ไม่พัง)
+    // 1. กำหนดค่าเริ่มต้นจาก Widget/ค่าว่าง
     traysCap = widget.traysCap.map((l) => _ensureLenDouble(l)).toList();
     traysRes = widget.traysRes.map((l) => _ensureLenDouble(l)).toList();
     traysStatus = widget.traysStatus.map((l) => _ensureLenBool(l)).toList();
@@ -77,7 +80,7 @@ class _SoilDetailPageUpdatedV2State extends State<SoilDetailPageUpdated> {
     // 2. เริ่ม Listener ทันทีเพื่อให้ดึงค่าจาก Firebase มาแสดงผล
     _listenToAllSoilMoisture();
 
-    // 3. โหลดข้อมูล Local Storage มาอัปเดตค่าอื่นๆ (traysCap, สถานะการเชื่อมต่อถาด)
+    // 3. โหลดข้อมูล Local Storage มาอัปเดตค่าอื่นๆ 
     loadData();
   }
 
@@ -89,7 +92,7 @@ class _SoilDetailPageUpdatedV2State extends State<SoilDetailPageUpdated> {
     super.dispose();
   }
 
-  // --------- RTDB SINGLE LISTENER ----------
+  // --------- RTDB SINGLE LISTENER & Pump Control ----------
   void _listenToAllSoilMoisture() {
     final ref = _database.ref('devices/soil/latest');
 
@@ -109,25 +112,33 @@ class _SoilDetailPageUpdatedV2State extends State<SoilDetailPageUpdated> {
             final rawValue = dataMap[sensorName];
             double v = 0.0;
 
-            // ตรวจสอบและแปลงค่าจาก Firebase
             if (rawValue is num) {
               v = rawValue.toDouble();
             } else if (rawValue is String) {
               v = double.tryParse(rawValue) ?? 0.0;
             }
-            // หากค่าเป็น null หรือ Map/List อื่นๆ v จะเป็น 0.0
 
             final val = v.clamp(0.0, 100.0).toDouble();
 
             // อัปเดตทุกถาด: traysRes คือค่าความชื้น
             for (int t = 0; t < traysRes.length; t++) {
               traysRes[t][i] = val;
-              // อัปเดตสถานะ (traysStatus): เป็น true ก็ต่อเมื่อมีค่าความชื้น > 0.0
-              // การเซ็ตตามค่าจริงนี้สำคัญมาก เพื่อใช้ในการคำนวณค่าเฉลี่ย
               traysStatus[t][i] = (val > 0.0);
             }
           }
+
           _isInitialDataLoaded = true;
+          
+          // *********************************************************
+          // *** Logic การควบคุมปั๊มน้ำอัตโนมัติ ***
+          // *********************************************************
+          if (traysRes.isNotEmpty) {
+            // ใช้ค่าเฉลี่ยของถาดแรก (index 0) ในการตัดสินใจ
+            final average = _calculateAverageMoisture(0);
+            _checkAndControlPump(average);
+          }
+          // *********************************************************
+
         });
         saveData();
       },
@@ -138,8 +149,60 @@ class _SoilDetailPageUpdatedV2State extends State<SoilDetailPageUpdated> {
   }
   // ------------------------------------------
 
-  // ---------- Local storage (load/save/add/remove - ไม่ได้แก้ไข) ----------
-  // ... (ฟังก์ชัน loadData, saveData, addTray, removeTray, _ensureLenDouble, _ensureLenBool เหมือนเดิม)
+  // *** Helper สำหรับคำนวณค่าเฉลี่ย ***
+  double _calculateAverageMoisture(int trayIndex) {
+    if (traysRes.isEmpty || traysRes.length <= trayIndex) return 0.0;
+    
+    final List<double> sensorValues = traysRes[trayIndex];
+    final List<double> activeSensorValues = sensorValues
+        .where((val) => val > 0.0)
+        .toList();
+
+    if (activeSensorValues.isEmpty) return 0.0;
+
+    double sum = activeSensorValues.reduce((a, b) => a + b);
+    return sum / activeSensorValues.length;
+  }
+  
+  // *** Logic การควบคุมปั๊มน้ำอัตโนมัติ ***
+  void _checkAndControlPump(double averageMoisture) {
+    String? status;
+    
+    // เงื่อนไข: น้อยกว่า 60% -> เปิดปั๊ม (สถานะ 'on')
+    if (averageMoisture < 60.0) {
+      status = 'on';
+    } 
+    // เงื่อนไข: มากกว่า 70% -> ปิดปั๊ม (สถานะ 'off')
+    else if (averageMoisture > 70.0) {
+      status = 'off';
+    }
+    
+    // สั่งควบคุมเมื่อสถานะมีการเปลี่ยนแปลงเท่านั้น
+    if (status != null && status != _lastPumpStatus) {
+      _controlPumpStatus(status, averageMoisture);
+    }
+  }
+
+  // ฟังก์ชันสั่งเขียนสถานะปั๊มน้ำลง Firestore
+  Future<void> _controlPumpStatus(String status, double avg) async {
+    try {
+      // เขียนสถานะปั๊มไปยัง devices/pump
+      await _firestore.collection('devices').doc('pump').set({
+        'status': status,
+        // ตั้ง autoMode เป็น true เพื่อให้รู้ว่าถูกควบคุมจากระบบความชื้น
+        'autoMode': true, 
+        'lastAutoUpdated': FieldValue.serverTimestamp(),
+      }, SetOptions(merge: true));
+      
+      _lastPumpStatus = status; // อัปเดตสถานะสุดท้ายที่สั่ง
+      debugPrint('Pump set to $status by soil auto control (Avg: ${avg.toStringAsFixed(1)}%)');
+    } catch (e) {
+      debugPrint("Error controlling pump: $e");
+    }
+  }
+  // --------------------------------------------------------------------------
+
+  // ---------- Local storage (load/save/add/remove) ----------
   Future<void> loadData() async {
     final prefs = await SharedPreferences.getInstance();
     final savedCap = prefs.getString('traysCap');
@@ -158,7 +221,6 @@ class _SoilDetailPageUpdatedV2State extends State<SoilDetailPageUpdated> {
           : traysCap;
 
       // โหลดค่า Resistance (traysRes) จาก Local Storage แต่จะถูกแทนที่ทันทีด้วย Firebase
-      // เรายังโหลดไว้เพื่อใช้เป็นค่าสำรอง/ค่าสุดท้ายก่อนปิดแอป
       traysRes = savedRes != null
           ? (jsonDecode(savedRes) as List)
                 .map<List<double>>(
@@ -170,22 +232,21 @@ class _SoilDetailPageUpdatedV2State extends State<SoilDetailPageUpdated> {
       // โหลดสถานะ
       traysStatus = savedStatus != null
           ? (jsonDecode(savedStatus) as List).map<List<bool>>((t) {
-              final trayIndex = (jsonDecode(savedStatus) as List).indexOf(t);
-              final currentRes = traysRes.length > trayIndex
-                  ? traysRes[trayIndex]
-                  : List<double>.filled(kSensorsPerTray, 0.0);
-              // สถานะจะถูกตั้งตามค่าความชื้นที่โหลดมา (true ถ้า > 0.0)
-              return _ensureLenBool(
-                List.generate(kSensorsPerTray, (i) => currentRes[i] > 0.0),
-              );
-            }).toList()
+                final trayIndex = (jsonDecode(savedStatus) as List).indexOf(t);
+                final currentRes = traysRes.length > trayIndex
+                    ? traysRes[trayIndex]
+                    : List<double>.filled(kSensorsPerTray, 0.0);
+                return _ensureLenBool(
+                  List.generate(kSensorsPerTray, (i) => currentRes[i] > 0.0),
+                );
+              }).toList()
           : traysStatus;
 
       traysConnected = savedConnected != null
           ? List<bool>.from(jsonDecode(savedConnected))
           : traysConnected;
 
-      // ตรวจสอบความว่างอีกครั้ง (เผื่อกรณีไม่มีข้อมูลใน SharedPreferences เลย)
+      // ตรวจสอบความว่างอีกครั้ง
       if (traysCap.isEmpty) {
         traysCap = [List.filled(kSensorsPerTray, 0.0)];
         traysRes = [List.filled(kSensorsPerTray, 0.0)];
@@ -239,26 +300,13 @@ class _SoilDetailPageUpdatedV2State extends State<SoilDetailPageUpdated> {
   // --------------------------------------------------------------------------
 
   // --- Widget สำหรับแสดงค่าเฉลี่ย ---
-  // ... (ฟังก์ชัน _buildAverageSection เหมือนเดิม)
   Widget _buildAverageSection(int trayIndex) {
+    final double average = _calculateAverageMoisture(trayIndex);
+    
     final List<double> sensorValues = traysRes[trayIndex];
-
-    final List<double> activeSensorValues = [];
-
-    for (int i = 0; i < kSensorsPerTray; i++) {
-      if (sensorValues[i] > 0.0) {
-        activeSensorValues.add(sensorValues[i]);
-      }
-    }
-
-    double average = 0.0;
-    if (activeSensorValues.isNotEmpty) {
-      average =
-          activeSensorValues.reduce((a, b) => a + b) /
-          activeSensorValues.length;
-    }
-
-    final int sensorsCounted = activeSensorValues.length;
+    final int sensorsCounted = sensorValues
+        .where((val) => val > 0.0)
+        .length;
 
     return Column(
       crossAxisAlignment: CrossAxisAlignment.start,
@@ -340,7 +388,6 @@ class _SoilDetailPageUpdatedV2State extends State<SoilDetailPageUpdated> {
           ),
         ],
       ),
-      // แก้ไข: แสดง CircularProgressIndicator หากยังไม่โหลดข้อมูลจาก Firebase
       body: traysCap.isEmpty || !_isInitialDataLoaded
           ? const Center(child: CircularProgressIndicator())
           : ListView.builder(
@@ -351,7 +398,6 @@ class _SoilDetailPageUpdatedV2State extends State<SoilDetailPageUpdated> {
     );
   }
 
-  // *** แก้ไข Logic สถานะการแสดงผลใน buildTrayCard ***
   Widget buildTrayCard(int trayIndex) {
     return Card(
       margin: const EdgeInsets.symmetric(vertical: 10),
@@ -362,7 +408,6 @@ class _SoilDetailPageUpdatedV2State extends State<SoilDetailPageUpdated> {
         child: Column(
           crossAxisAlignment: CrossAxisAlignment.start,
           children: [
-            // ... (ส่วนหัวถาดเหมือนเดิม)
             Row(
               children: [
                 Expanded(
@@ -384,7 +429,7 @@ class _SoilDetailPageUpdatedV2State extends State<SoilDetailPageUpdated> {
             ),
             const SizedBox(height: 4),
             Text(
-              'วันที่: ${widget.date}    เวลา: ${widget.time}',
+              'วันที่: ${widget.date}    เวลา: ${widget.time}',
               style: TextStyle(
                 fontSize: widget.fontSize,
                 color: Colors.grey.shade600,
@@ -398,7 +443,6 @@ class _SoilDetailPageUpdatedV2State extends State<SoilDetailPageUpdated> {
             ...List.generate(kSensorsPerTray, (sensorIndex) {
               final double resVal = traysRes[trayIndex][sensorIndex];
 
-              // *** Logic ใหม่: ใช้ resVal เป็นตัวกำหนดสถานะเท่านั้น ***
               String statusText;
               Color statusColor;
               IconData statusIcon;
@@ -414,7 +458,6 @@ class _SoilDetailPageUpdatedV2State extends State<SoilDetailPageUpdated> {
                 statusColor = Colors.amber;
                 statusIcon = Icons.access_time;
               }
-              // *** ลบ Logic '❌ ขัดข้อง' และ '⏳ รอค่า' ออก เพื่อให้มีสถานะเดียวเมื่อค่าเป็น 0.0% ***
 
               return Container(
                 margin: const EdgeInsets.symmetric(vertical: 8),
@@ -438,7 +481,7 @@ class _SoilDetailPageUpdatedV2State extends State<SoilDetailPageUpdated> {
                         CircleAvatar(
                           backgroundColor: statusColor.withOpacity(0.1),
                           child: Icon(
-                            statusIcon, // ใช้ Icon ที่กำหนดไว้
+                            statusIcon, 
                             color: statusColor,
                           ),
                         ),

@@ -26,9 +26,9 @@ android {
         applicationId = "com.example.endproject"
         
         // **********************************************
-        // ********** ส่วนที่แก้ไข ***********************
+        // ********** ส่วนที่แก้ไขให้ถูกต้อง *************
         // **********************************************
-        minSdk = flutter.minSdkVersion // เปลี่ยนจาก flutter.minSdkVersion หรือ 21 เป็น 23
+        minSdk = 23 // แก้จาก flutter.minSdkVersion เป็น 23 โดยตรง
         
         targetSdk = flutter.targetSdkVersion
         versionCode = flutter.versionCode

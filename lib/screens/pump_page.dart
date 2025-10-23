@@ -14,28 +14,31 @@ class PumpPage extends StatefulWidget {
 }
 
 class _PumpPageState extends State<PumpPage> {
-  bool pumpOn = false;
-  bool auto = false;
-  double waterLevel = 0.0;
+  // สถานะที่อ่านจาก Firestore/RTDB
+  bool pumpOn = false; // สถานะปั๊ม: อ่านจาก Firestore 'status'
+  bool auto = false; // โหมดอัตโนมัติ: อ่านจาก Firestore 'autoMode'
+  double waterLevel = 0.0; // ระดับน้ำ: อ่านจาก RTDB
+  double tankCapacity = 100.0; // ความจุถัง: อ่านจาก RTDB
+  bool floatSwitchOn = false; // สถานะลูกลอย: อ่านจาก RTDB
 
-  double tankCapacity = 100.0;
-  bool floatSwitchOn = false;
-
+  // ประวัติการเติมน้ำ: อ่านจาก Firestore Subcollection
   List<Map<String, dynamic>> waterHistory = [];
 
+  // Firestore & Realtime Database Instances
   final FirebaseFirestore _firestore = FirebaseFirestore.instance;
   late final FirebaseDatabase _database;
 
   static const String rtdbUrl =
       'https://project-41b3d-default-rtdb.asia-southeast1.firebasedatabase.app';
 
+  // Stream Subscriptions
   StreamSubscription<DatabaseEvent>? _waterLevelSubscription;
   StreamSubscription<DatabaseEvent>? _tankCapacitySubscription;
   StreamSubscription<DatabaseEvent>? _floatSwitchSubscription;
   StreamSubscription<DocumentSnapshot<Map<String, dynamic>>>?
-  _pumpStatusSubscription;
+      _pumpStatusSubscription;
   StreamSubscription<QuerySnapshot<Map<String, dynamic>>>?
-  _waterHistorySubscription;
+      _waterHistorySubscription;
 
   @override
   void initState() {
@@ -46,11 +49,12 @@ class _PumpPageState extends State<PumpPage> {
       databaseURL: rtdbUrl,
     );
 
+    // เริ่ม Listeners ทั้งหมด
     _listenToPumpStatus();
     _listenToWaterHistory();
     _listenToWaterLevel();
     _listenToTankCapacity();
-    _listenToFloatSwitch(); // ฟังลูกลอย
+    _listenToFloatSwitch();
   }
 
   @override
@@ -63,9 +67,9 @@ class _PumpPageState extends State<PumpPage> {
     super.dispose();
   }
 
-  // ---------- Helpers ----------
+  // ---------- Helpers & Listeners (โค้ดเดิม) ----------
+
   bool _parseBool(dynamic v) {
-    // รองรับ bool / 1/0 / "true"/"false" / "1"/"0" (รวมถึงเว้นวรรค)
     if (v is bool) return v;
     if (v is num) return v != 0;
     if (v is String) {
@@ -83,8 +87,6 @@ class _PumpPageState extends State<PumpPage> {
     setState(cb);
   }
 
-  // ---------- Firebase Listeners ----------
-
   void _listenToPumpStatus() {
     _pumpStatusSubscription = _firestore
         .collection('devices')
@@ -96,8 +98,9 @@ class _PumpPageState extends State<PumpPage> {
               final data = snapshot.data();
               if (data != null) {
                 _safeSetState(() {
-                  pumpOn = data['status'] == 'on';
-                  auto = data['autoMode'] ?? false;
+                  // อัปเดตสถานะปั๊มและโหมดอัตโนมัติตาม Firestore
+                  pumpOn = data['status'] == 'on'; //
+                  auto = data['autoMode'] ?? false; //
                 });
               }
             }
@@ -128,9 +131,6 @@ class _PumpPageState extends State<PumpPage> {
           },
           onError: (error) {
             debugPrint("Error listening to water history: $error");
-            ScaffoldMessenger.of(context).showSnackBar(
-              SnackBar(content: Text('เกิดข้อผิดพลาดในการโหลดประวัติ: $error')),
-            );
           },
         );
   }
@@ -147,7 +147,6 @@ class _PumpPageState extends State<PumpPage> {
           if (parsed != null) {
             _safeSetState(() => waterLevel = parsed!);
           } else {
-            debugPrint("Warning: Could not parse water level: $data");
             _safeSetState(() => waterLevel = 0.0);
           }
         } else {
@@ -156,11 +155,6 @@ class _PumpPageState extends State<PumpPage> {
       },
       onError: (error) {
         debugPrint("Error listening to water level: $error");
-        ScaffoldMessenger.of(context).showSnackBar(
-          SnackBar(
-            content: Text('เกิดข้อผิดพลาดในการเชื่อมต่อระดับน้ำ: $error'),
-          ),
-        );
       },
     );
   }
@@ -183,13 +177,11 @@ class _PumpPageState extends State<PumpPage> {
     );
   }
 
-  // <<< จุดสำคัญ: ฟัง floatSwitchState และพาร์สให้ชัดเจน >>>
   void _listenToFloatSwitch() {
     final ref = _database.ref('devices/pump/floatSwitchState');
     _floatSwitchSubscription = ref.onValue.listen(
       (event) {
         final raw = event.snapshot.value;
-        debugPrint('floatSwitchState raw: $raw (${raw.runtimeType})');
         final next = _parseBool(raw);
         _safeSetState(() => floatSwitchOn = next);
       },
@@ -199,65 +191,108 @@ class _PumpPageState extends State<PumpPage> {
     );
   }
 
-  // ---------- Actions ----------
+  // ---------- Actions (เพิ่ม Logic บล็อกเมื่อ Auto Mode ทำงาน) ----------
 
   Future<void> togglePump(bool value) async {
+    // *** Logic การบล็อกเมื่อ Auto Mode ทำงาน ***
+    if (auto) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(
+          content: Text(
+            '⚠️ ปิดปั๊มด้วยมือไม่ได้! ปั๊มถูกควบคุมโดยโหมดอัตโนมัติ (ความชื้น)',
+            style: TextStyle(fontSize: widget.fontSize, fontFamily: 'Prompt'),
+          ),
+          backgroundColor: Colors.orange.shade700,
+        ),
+      );
+      // ต้อง set state กลับเพื่อให้ switch ไม่ขยับตามการแตะ
+      _safeSetState(() => pumpOn = !value);
+      return;
+    }
+
+    // โค้ดเดิม: สั่งงานเมื่อ Auto Mode ถูกปิด
     _safeSetState(() {
       pumpOn = value;
-      if (pumpOn && auto) auto = false;
+      // เนื่องจาก Auto ถูกปิดอยู่แล้ว จึงไม่ต้อง set auto = false ซ้ำ
     });
 
     try {
       await _firestore.collection('devices').doc('pump').set({
         'status': value ? 'on' : 'off',
         'autoMode': auto,
-        'lastUpdated': FieldValue.serverTimestamp(),
+        'lastManualUpdated': FieldValue.serverTimestamp(), // เปลี่ยนชื่อ Field ให้ชัดเจน
       }, SetOptions(merge: true));
 
       if (value) await _addWaterHistory('Manual');
 
       ScaffoldMessenger.of(context).showSnackBar(
-        SnackBar(content: Text('ปั๊มน้ำถูก ${value ? "เปิด" : "ปิด"} แล้ว')),
+        SnackBar(
+            content: Text(
+          'ปั๊มน้ำถูก ${value ? "เปิด" : "ปิด"} แล้ว',
+          style: TextStyle(fontFamily: 'Prompt'),
+        )),
       );
     } catch (e) {
       debugPrint("Error updating pump status: $e");
       ScaffoldMessenger.of(context).showSnackBar(
-        SnackBar(content: Text('ไม่สามารถอัปเดตสถานะปั๊มน้ำได้: $e')),
+        SnackBar(
+            content: Text(
+          'ไม่สามารถอัปเดตสถานะปั๊มน้ำได้: $e',
+          style: TextStyle(fontFamily: 'Prompt'),
+        )),
       );
       _safeSetState(() => pumpOn = !value);
     }
   }
 
   Future<void> toggleAuto() async {
-    _safeSetState(() {
-      auto = !auto;
-      if (auto && pumpOn) pumpOn = false;
-    });
+    final bool nextAuto = !auto;
 
+    // หากเปิดโหมดอัตโนมัติ ต้องสั่งปิดปั๊มทันทีเพื่อส่งมอบการควบคุมให้ระบบอัตโนมัติ
+    if (nextAuto && pumpOn) {
+      await _firestore.collection('devices').doc('pump').set({
+        'status': 'off', // สั่งปิดทันที
+        'autoMode': nextAuto,
+        'lastManualUpdated': FieldValue.serverTimestamp(),
+      }, SetOptions(merge: true));
+    }
+    
+    // อัปเดต Auto Mode เท่านั้น
     try {
       await _firestore.collection('devices').doc('pump').set({
-        'autoMode': auto,
-        'status': pumpOn ? 'on' : 'off',
-        'lastUpdated': FieldValue.serverTimestamp(),
+        'autoMode': nextAuto,
+        'lastAutoModeToggle': FieldValue.serverTimestamp(), // เปลี่ยนชื่อ Field ให้ชัดเจน
       }, SetOptions(merge: true));
 
-      if (auto) await _addWaterHistory('Auto');
+      _safeSetState(() {
+        auto = nextAuto;
+        // pumpOn จะถูกอัปเดตอัตโนมัติโดย Listener
+      });
+
+      if (nextAuto) await _addWaterHistory('Auto On');
 
       ScaffoldMessenger.of(context).showSnackBar(
         SnackBar(
-          content: Text('โหมดอัตโนมัติถูก ${auto ? "เปิด" : "ปิด"} แล้ว'),
-        ),
+            content: Text(
+          'โหมดอัตโนมัติถูก ${nextAuto ? "เปิด" : "ปิด"} แล้ว',
+          style: TextStyle(fontFamily: 'Prompt'),
+        )),
       );
     } catch (e) {
       debugPrint("Error updating auto mode: $e");
       ScaffoldMessenger.of(context).showSnackBar(
-        SnackBar(content: Text('ไม่สามารถอัปเดตโหมดอัตโนมัติได้: $e')),
+        SnackBar(
+            content: Text(
+          'ไม่สามารถอัปเดตโหมดอัตโนมัติได้: $e',
+          style: TextStyle(fontFamily: 'Prompt'),
+        )),
       );
-      _safeSetState(() => auto = !auto);
     }
   }
 
+  // (ส่วน _addWaterHistory และ _clearWaterHistory ใช้โค้ดเดิม)
   Future<void> _addWaterHistory(String mode) async {
+    // ... (ใช้โค้ดเดิม) ...
     double currentWaterLevel = 0.0;
     try {
       final snapshot = await _database.ref('devices/pump/waterLevel').once();
@@ -283,12 +318,9 @@ class _PumpPageState extends State<PumpPage> {
           .add(item);
     } catch (e) {
       debugPrint("Error adding water history to Firestore: $e");
-      ScaffoldMessenger.of(context).showSnackBar(
-        SnackBar(content: Text('ไม่สามารถบันทึกประวัติการเติมน้ำได้: $e')),
-      );
     }
   }
-
+  
   void _clearWaterHistory() {
     showDialog(
       context: context,
@@ -339,7 +371,8 @@ class _PumpPageState extends State<PumpPage> {
     );
   }
 
-  // ---------- UI ----------
+
+  // ---------- UI (มีการแก้ไข Switch ใน Card) ----------
 
   @override
   Widget build(BuildContext context) {
@@ -367,10 +400,8 @@ class _PumpPageState extends State<PumpPage> {
               const SizedBox(height: 16),
               _buildAutoCard(),
               const SizedBox(height: 16),
-
               _buildFloatSwitchCard(),
               const SizedBox(height: 24),
-
               _buildWaterLevel(),
               const SizedBox(height: 24),
               Row(
@@ -487,10 +518,12 @@ class _PumpPageState extends State<PumpPage> {
                       ),
                     ),
                     Text(
-                      pumpOn ? 'กำลังทำงาน' : 'ปิดอยู่',
+                      pumpOn
+                          ? (auto ? 'ถูกควบคุมโดยอัตโนมัติ' : 'กำลังทำงาน')
+                          : 'ปิดอยู่',
                       style: TextStyle(
                         fontSize: widget.fontSize,
-                        color: Colors.grey.shade700,
+                        color: pumpOn ? Colors.teal.shade700 : Colors.grey.shade700,
                         fontFamily: 'Prompt',
                       ),
                     ),
@@ -499,8 +532,8 @@ class _PumpPageState extends State<PumpPage> {
               ),
               Switch(
                 value: pumpOn,
-                // แก้ไข: เปลี่ยน activeThumbColor เป็น activeColor
-                activeThumbColor: Colors.green,
+                // **แก้ไข:** เปลี่ยน activeThumbColor เป็น activeColor
+                activeColor: Colors.green,
                 onChanged: togglePump,
               ),
             ],
@@ -512,7 +545,7 @@ class _PumpPageState extends State<PumpPage> {
 
   Widget _buildAutoCard() {
     return Card(
-      color: auto ? Colors.green.shade50 : Colors.grey.shade100,
+      color: auto ? Colors.lightGreen.shade50 : Colors.grey.shade100,
       elevation: 6,
       shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(20)),
       child: InkWell(
@@ -520,30 +553,52 @@ class _PumpPageState extends State<PumpPage> {
         onTap: toggleAuto,
         child: Padding(
           padding: const EdgeInsets.all(16),
-          child: Row(
+          child: Column(
             children: [
-              Icon(
-                FontAwesomeIcons.robot,
-                color: auto ? Colors.green : Colors.grey,
-                size: 50,
-              ),
-              const SizedBox(width: 16),
-              Expanded(
-                child: Text(
-                  'โหมดอัตโนมัติ',
-                  style: TextStyle(
-                    fontSize: widget.fontSize + 2,
-                    fontWeight: FontWeight.w600,
-                    fontFamily: 'Prompt',
+              Row(
+                children: [
+                  Icon(
+                    FontAwesomeIcons.robot,
+                    color: auto ? Colors.green : Colors.grey,
+                    size: 50,
                   ),
-                ),
+                  const SizedBox(width: 16),
+                  Expanded(
+                    child: Column(
+                      crossAxisAlignment: CrossAxisAlignment.start,
+                      children: [
+                        Text(
+                          'โหมดอัตโนมัติ',
+                          style: TextStyle(
+                            fontSize: widget.fontSize + 2,
+                            fontWeight: FontWeight.w600,
+                            fontFamily: 'Prompt',
+                          ),
+                        ),
+                        Text(
+                          auto ? 'ควบคุมปั๊มตามค่าความชื้น' : 'ควบคุมด้วยมือเท่านั้น',
+                          style: TextStyle(
+                            fontSize: widget.fontSize,
+                            color: Colors.grey.shade700,
+                            fontFamily: 'Prompt',
+                          ),
+                        ),
+                      ],
+                    ),
+                  ),
+                  Switch(
+                    value: auto,
+                    // **แก้ไข:** เปลี่ยน activeThumbColor เป็น activeColor
+                    activeColor: Colors.green,
+                    onChanged: (_) => toggleAuto(),
+                  ),
+                ],
               ),
-              Switch(
-                value: auto,
-                // แก้ไข: เปลี่ยน activeThumbColor เป็น activeColor
-                activeThumbColor: Colors.green,
-                onChanged: (_) => toggleAuto(),
-              ),
+              if (auto) ...[
+                const SizedBox(height: 10),
+                Divider(color: Colors.green.shade200),
+                const SizedBox(height: 5),
+              ],
             ],
           ),
         ),
@@ -553,7 +608,7 @@ class _PumpPageState extends State<PumpPage> {
 
   Widget _buildFloatSwitchCard() {
     return Card(
-      color: floatSwitchOn ? Colors.green.shade50 : Colors.grey.shade100,
+      color: floatSwitchOn ? Colors.lightBlue.shade50 : Colors.grey.shade100,
       elevation: 6,
       shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(20)),
       child: Padding(
@@ -562,7 +617,7 @@ class _PumpPageState extends State<PumpPage> {
           children: [
             Icon(
               FontAwesomeIcons.lifeRing,
-              color: floatSwitchOn ? Colors.teal : Colors.grey,
+              color: floatSwitchOn ? Colors.blue : Colors.grey,
               size: 50,
             ),
             const SizedBox(width: 16),
@@ -579,7 +634,7 @@ class _PumpPageState extends State<PumpPage> {
                     ),
                   ),
                   Text(
-                    floatSwitchOn ? 'ON' : 'OFF',
+                    floatSwitchOn ? 'ON (น้ำเต็ม/กำลังสูง)' : 'OFF (น้ำลด/กำลังต่ำ)',
                     style: TextStyle(
                       fontSize: widget.fontSize,
                       color: Colors.grey.shade700,
@@ -592,8 +647,8 @@ class _PumpPageState extends State<PumpPage> {
             IgnorePointer(
               child: Switch(
                 value: floatSwitchOn,
-                // แก้ไข: เปลี่ยน activeThumbColor เป็น activeColor
-                activeThumbColor: Colors.green,
+                // **แก้ไข:** เปลี่ยน activeThumbColor เป็น activeColor
+                activeColor: Colors.blue, // ใช้สีฟ้าให้เข้ากับน้ำ
                 onChanged: (_) {},
               ),
             ),
