@@ -48,6 +48,7 @@ class _DashboardScreenState extends State<DashboardScreen> {
   bool sprinklerOn = false;
   bool sprinklerAuto = true;
 
+
   // จะถูกอัปเดตจาก Firebase
   double waterLevel = 0.0;
 
