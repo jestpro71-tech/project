@@ -1,37 +1,52 @@
 import 'dart:async';
+import 'dart:convert';
 import 'package:flutter/material.dart';
 import 'package:font_awesome_flutter/font_awesome_flutter.dart';
 import 'package:cloud_firestore/cloud_firestore.dart';
 import 'package:firebase_core/firebase_core.dart';
 import 'package:firebase_database/firebase_database.dart';
+import 'package:http/http.dart' as http;
+
+// 🔑 OpenWeather API Key
+const String kOpenWeatherApiKey = '7e0b123a7f044bb8111cac828f6aeb67';
 
 class PumpPage extends StatefulWidget {
   final double fontSize;
-  const PumpPage({super.key, this.fontSize = 16.0});
+
+  // ถ้ามี GPS จริงจากหน้าอื่น ส่งเข้ามาได้
+  final double? latitude;
+  final double? longitude;
+
+  const PumpPage({
+    super.key,
+    this.fontSize = 16.0,
+    this.latitude,
+    this.longitude,
+  });
 
   @override
   State<PumpPage> createState() => _PumpPageState();
 }
 
 class _PumpPageState extends State<PumpPage> {
-  // สถานะที่อ่านจาก Firestore/RTDB
-  bool pumpOn = false; // สถานะปั๊ม: อ่านจาก Firestore 'status'
-  bool auto = false; // โหมดอัตโนมัติ: อ่านจาก Firestore 'autoMode'
-  double waterLevel = 0.0; // ระดับน้ำ: อ่านจาก RTDB
-  double tankCapacity = 100.0; // ความจุถัง: อ่านจาก RTDB
-  bool floatSwitchOn = false; // สถานะลูกลอย: อ่านจาก RTDB
+  // ================= BASIC STATE =================
 
-  // ประวัติการเติมน้ำ: อ่านจาก Firestore Subcollection
+  bool pumpOn = false;          // สถานะปั๊ม
+  bool auto = false;            // โหมดอัตโนมัติ
+  double waterLevel = 0.0;      // ระดับน้ำในถัง
+  double tankCapacity = 100.0;  // ความจุถัง
+  bool floatSwitchOn = false;   // ลูกลอย
+
   List<Map<String, dynamic>> waterHistory = [];
 
-  // Firestore & Realtime Database Instances
+  // Firebase
   final FirebaseFirestore _firestore = FirebaseFirestore.instance;
   late final FirebaseDatabase _database;
 
   static const String rtdbUrl =
       'https://project-41b3d-default-rtdb.asia-southeast1.firebasedatabase.app';
 
-  // Stream Subscriptions
+  // Streams
   StreamSubscription<DatabaseEvent>? _waterLevelSubscription;
   StreamSubscription<DatabaseEvent>? _tankCapacitySubscription;
   StreamSubscription<DatabaseEvent>? _floatSwitchSubscription;
@@ -39,6 +54,15 @@ class _PumpPageState extends State<PumpPage> {
       _pumpStatusSubscription;
   StreamSubscription<QuerySnapshot<Map<String, dynamic>>>?
       _waterHistorySubscription;
+
+  // =============== WEATHER FORECAST ===============
+
+  List<dynamic> _forecast = [];
+  bool _isEvaluatingAuto = false;
+
+  // ถ้าไม่ได้ส่ง GPS จะใช้ค่าดีฟอลต์ = เชียงใหม่
+  double get _lat => widget.latitude ?? 18.7904;
+  double get _lon => widget.longitude ?? 98.9853;
 
   @override
   void initState() {
@@ -49,7 +73,7 @@ class _PumpPageState extends State<PumpPage> {
       databaseURL: rtdbUrl,
     );
 
-    // เริ่ม Listeners ทั้งหมด
+    // เริ่มฟังค่าจาก Firebase
     _listenToPumpStatus();
     _listenToWaterHistory();
     _listenToWaterLevel();
@@ -67,7 +91,7 @@ class _PumpPageState extends State<PumpPage> {
     super.dispose();
   }
 
-  // ---------- Helpers & Listeners (โค้ดเดิม) ----------
+  // =================== HELPERS ====================
 
   bool _parseBool(dynamic v) {
     if (v is bool) return v;
@@ -87,33 +111,34 @@ class _PumpPageState extends State<PumpPage> {
     setState(cb);
   }
 
+  // ================== LISTENERS ===================
+
   void _listenToPumpStatus() {
     _pumpStatusSubscription = _firestore
         .collection('devices')
         .doc('pump')
         .snapshots()
         .listen(
-          (snapshot) {
-            if (snapshot.exists) {
-              final data = snapshot.data();
-              if (data != null) {
-                _safeSetState(() {
-                  // อัปเดตสถานะปั๊มและโหมดอัตโนมัติตาม Firestore
-                  pumpOn = data['status'] == 'on'; //
-                  auto = data['autoMode'] ?? false; //
-                });
-              }
-            }
-          },
-          onError: (error) {
-            debugPrint("Error listening to pump status: $error");
-            ScaffoldMessenger.of(context).showSnackBar(
-              SnackBar(
-                content: Text('เกิดข้อผิดพลาดในการเชื่อมต่อสถานะปั๊ม: $error'),
-              ),
-            );
-          },
+      (snapshot) {
+        if (snapshot.exists) {
+          final data = snapshot.data();
+          if (data != null) {
+            _safeSetState(() {
+              pumpOn = data['status'] == 'on';
+              auto = data['autoMode'] ?? false;
+            });
+          }
+        }
+      },
+      onError: (error) {
+        debugPrint("Error listening to pump status: $error");
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(
+            content: Text('เกิดข้อผิดพลาดในการเชื่อมต่อสถานะปั๊ม: $error'),
+          ),
         );
+      },
+    );
   }
 
   void _listenToWaterHistory() {
@@ -124,15 +149,15 @@ class _PumpPageState extends State<PumpPage> {
         .orderBy('timestamp', descending: true)
         .snapshots()
         .listen(
-          (snapshot) {
-            _safeSetState(() {
-              waterHistory = snapshot.docs.map((doc) => doc.data()).toList();
-            });
-          },
-          onError: (error) {
-            debugPrint("Error listening to water history: $error");
-          },
-        );
+      (snapshot) {
+        _safeSetState(() {
+          waterHistory = snapshot.docs.map((doc) => doc.data()).toList();
+        });
+      },
+      onError: (error) {
+        debugPrint("Error listening to water history: $error");
+      },
+    );
   }
 
   void _listenToWaterLevel() {
@@ -152,6 +177,9 @@ class _PumpPageState extends State<PumpPage> {
         } else {
           _safeSetState(() => waterLevel = 0.0);
         }
+
+        // ทุกครั้งที่ระดับน้ำเปลี่ยน ให้ลองประเมิน Auto
+        _evaluateAutoPump();
       },
       onError: (error) {
         debugPrint("Error listening to water level: $error");
@@ -184,6 +212,9 @@ class _PumpPageState extends State<PumpPage> {
         final raw = event.snapshot.value;
         final next = _parseBool(raw);
         _safeSetState(() => floatSwitchOn = next);
+
+        // ถ้าลูกลอยเปลี่ยนสถานะ ให้ประเมิน Auto ใหม่
+        _evaluateAutoPump();
       },
       onError: (e) {
         debugPrint('FloatSwitch listener error: $e');
@@ -191,55 +222,155 @@ class _PumpPageState extends State<PumpPage> {
     );
   }
 
-  // ---------- Actions (เพิ่ม Logic บล็อกเมื่อ Auto Mode ทำงาน) ----------
+  // ========== WEATHER FORECAST & AUTO LOGIC ==========
+
+  Future<List<dynamic>> _fetchForecast() async {
+    final url =
+        'https://api.openweathermap.org/data/2.5/forecast?lat=$_lat&lon=$_lon&appid=$kOpenWeatherApiKey&units=metric&lang=th';
+
+    try {
+      final response = await http.get(Uri.parse(url));
+      debugPrint('🌦 Forecast status: ${response.statusCode}');
+      if (response.statusCode == 200) {
+        final data = jsonDecode(response.body);
+        final list = data['list'] as List<dynamic>;
+        _forecast = list;
+        return list;
+      } else {
+        return [];
+      }
+    } catch (e) {
+      debugPrint('Error fetching forecast: $e');
+      return [];
+    }
+  }
+
+  /// ตรวจว่ามีฝนไหมใน 12 ชั่วโมงข้างหน้า (ดึง 4 ช่วง x 3 ชั่วโมง)
+  bool _willRainSoon(List<dynamic> forecast) {
+    final int count = forecast.length < 4 ? forecast.length : 4;
+    for (int i = 0; i < count; i++) {
+      final f = forecast[i];
+      final String main =
+          f['weather'][0]['main'].toString().toLowerCase(); // Rain / Clouds
+      if (main.contains('rain')) return true;
+    }
+    return false;
+  }
+
+  /// ใช้ใน Auto Mode: ตัดสินใจเปิด/ปิดปั๊มจาก
+  /// - สถานะลูกลอย
+  /// - พยากรณ์ฝน
+  Future<void> _evaluateAutoPump() async {
+    if (!auto) return; // ไม่อยู่ในโหมด Auto ก็ไม่ต้องทำอะไร
+    if (_isEvaluatingAuto) return; // กันการเรียกซ้อน
+
+    _isEvaluatingAuto = true;
+
+    try {
+      // 1) โหลดพยากรณ์อากาศ
+      final forecast = await _fetchForecast();
+      if (forecast.isEmpty) {
+        debugPrint('Forecast empty, skip auto pump decision.');
+        _isEvaluatingAuto = false;
+        return;
+      }
+
+      final rainComing = _willRainSoon(forecast);
+      debugPrint('🌧 Rain coming soon? $rainComing');
+      debugPrint('💧 WaterLevel: $waterLevel / $tankCapacity');
+      debugPrint('🔵 FloatSwitch: $floatSwitchOn');
+
+      // 2) Logic ตัดสินใจ
+      if (floatSwitchOn) {
+        // น้ำเต็ม → ปิดปั๊ม
+        await _setPumpStatus(false, 'Auto: Float full');
+      } else if (rainComing) {
+        // ฝนกำลังจะตก → ปิดปั๊ม เก็บน้ำฝน
+        await _setPumpStatus(false, 'Auto: Rain forecast');
+      } else {
+        // ไม่มีฝน และน้ำยังไม่เต็ม → เปิดปั๊ม
+        await _setPumpStatus(true, 'Auto: Weather OK');
+      }
+    } catch (e) {
+      debugPrint('Error in _evaluateAutoPump: $e');
+    } finally {
+      _isEvaluatingAuto = false;
+    }
+  }
+
+  /// helper สำหรับสั่งสถานะปั๊มจาก Auto Logic
+  Future<void> _setPumpStatus(bool on, String mode) async {
+    // ลดการเขียนซ้ำ ถ้าสถานะเดิมเหมือนเดิมแล้ว
+    if (pumpOn == on && auto) return;
+
+    try {
+      await _firestore.collection('devices').doc('pump').set({
+        'status': on ? 'on' : 'off',
+        'autoMode': true,
+        'autoReason': mode,
+        'lastAutoUpdated': FieldValue.serverTimestamp(),
+      }, SetOptions(merge: true));
+
+      _safeSetState(() {
+        pumpOn = on;
+      });
+
+      if (on) {
+        await _addWaterHistory(mode);
+      }
+    } catch (e) {
+      debugPrint('Error setting pump status (auto): $e');
+    }
+  }
+
+  // =================== ACTIONS ====================
 
   Future<void> togglePump(bool value) async {
-    // *** Logic การบล็อกเมื่อ Auto Mode ทำงาน ***
+    // ถ้าอยู่ในโหมด Auto → ไม่ให้ควบคุมด้วยมือ
     if (auto) {
       ScaffoldMessenger.of(context).showSnackBar(
         SnackBar(
           content: Text(
-            '⚠️ ปิดปั๊มด้วยมือไม่ได้! ปั๊มถูกควบคุมโดยโหมดอัตโนมัติ (ความชื้น)',
+            '⚠️ ปิด/เปิดปั๊มด้วยมือไม่ได้!\nปั๊มถูกควบคุมโดยโหมดอัตโนมัติ',
             style: TextStyle(fontSize: widget.fontSize, fontFamily: 'Prompt'),
           ),
           backgroundColor: Colors.orange.shade700,
         ),
       );
-      // ต้อง set state กลับเพื่อให้ switch ไม่ขยับตามการแตะ
       _safeSetState(() => pumpOn = !value);
       return;
     }
 
-    // โค้ดเดิม: สั่งงานเมื่อ Auto Mode ถูกปิด
     _safeSetState(() {
       pumpOn = value;
-      // เนื่องจาก Auto ถูกปิดอยู่แล้ว จึงไม่ต้อง set auto = false ซ้ำ
     });
 
     try {
       await _firestore.collection('devices').doc('pump').set({
         'status': value ? 'on' : 'off',
         'autoMode': auto,
-        'lastManualUpdated': FieldValue.serverTimestamp(), // เปลี่ยนชื่อ Field ให้ชัดเจน
+        'lastManualUpdated': FieldValue.serverTimestamp(),
       }, SetOptions(merge: true));
 
       if (value) await _addWaterHistory('Manual');
 
       ScaffoldMessenger.of(context).showSnackBar(
         SnackBar(
-            content: Text(
-          'ปั๊มน้ำถูก ${value ? "เปิด" : "ปิด"} แล้ว',
-          style: TextStyle(fontFamily: 'Prompt'),
-        )),
+          content: Text(
+            'ปั๊มน้ำถูก ${value ? "เปิด" : "ปิด"} แล้ว',
+            style: const TextStyle(fontFamily: 'Prompt'),
+          ),
+        ),
       );
     } catch (e) {
       debugPrint("Error updating pump status: $e");
       ScaffoldMessenger.of(context).showSnackBar(
         SnackBar(
-            content: Text(
-          'ไม่สามารถอัปเดตสถานะปั๊มน้ำได้: $e',
-          style: TextStyle(fontFamily: 'Prompt'),
-        )),
+          content: Text(
+            'ไม่สามารถอัปเดตสถานะปั๊มน้ำได้: $e',
+            style: const TextStyle(fontFamily: 'Prompt'),
+          ),
+        ),
       );
       _safeSetState(() => pumpOn = !value);
     }
@@ -248,51 +379,55 @@ class _PumpPageState extends State<PumpPage> {
   Future<void> toggleAuto() async {
     final bool nextAuto = !auto;
 
-    // หากเปิดโหมดอัตโนมัติ ต้องสั่งปิดปั๊มทันทีเพื่อส่งมอบการควบคุมให้ระบบอัตโนมัติ
-    if (nextAuto && pumpOn) {
-      await _firestore.collection('devices').doc('pump').set({
-        'status': 'off', // สั่งปิดทันที
-        'autoMode': nextAuto,
-        'lastManualUpdated': FieldValue.serverTimestamp(),
-      }, SetOptions(merge: true));
-    }
-    
-    // อัปเดต Auto Mode เท่านั้น
     try {
+      // ถ้าเปิด Auto และปั๊มยังเปิดอยู่ → ปิดก่อน
+      if (nextAuto && pumpOn) {
+        await _firestore.collection('devices').doc('pump').set({
+          'status': 'off',
+          'autoMode': nextAuto,
+          'lastManualUpdated': FieldValue.serverTimestamp(),
+        }, SetOptions(merge: true));
+      }
+
       await _firestore.collection('devices').doc('pump').set({
         'autoMode': nextAuto,
-        'lastAutoModeToggle': FieldValue.serverTimestamp(), // เปลี่ยนชื่อ Field ให้ชัดเจน
+        'lastAutoModeToggle': FieldValue.serverTimestamp(),
       }, SetOptions(merge: true));
 
       _safeSetState(() {
         auto = nextAuto;
-        // pumpOn จะถูกอัปเดตอัตโนมัติโดย Listener
       });
 
-      if (nextAuto) await _addWaterHistory('Auto On');
+      if (nextAuto) {
+        await _addWaterHistory('Auto On');
+        // เมื่อเปิด Auto ให้ประเมินจากอากาศทันที
+        _evaluateAutoPump();
+      }
 
       ScaffoldMessenger.of(context).showSnackBar(
         SnackBar(
-            content: Text(
-          'โหมดอัตโนมัติถูก ${nextAuto ? "เปิด" : "ปิด"} แล้ว',
-          style: TextStyle(fontFamily: 'Prompt'),
-        )),
+          content: Text(
+            'โหมดอัตโนมัติถูก ${nextAuto ? "เปิด" : "ปิด"} แล้ว',
+            style: const TextStyle(fontFamily: 'Prompt'),
+          ),
+        ),
       );
     } catch (e) {
       debugPrint("Error updating auto mode: $e");
       ScaffoldMessenger.of(context).showSnackBar(
         SnackBar(
-            content: Text(
-          'ไม่สามารถอัปเดตโหมดอัตโนมัติได้: $e',
-          style: TextStyle(fontFamily: 'Prompt'),
-        )),
+          content: Text(
+            'ไม่สามารถอัปเดตโหมดอัตโนมัติได้: $e',
+            style: const TextStyle(fontFamily: 'Prompt'),
+          ),
+        ),
       );
     }
   }
 
-  // (ส่วน _addWaterHistory และ _clearWaterHistory ใช้โค้ดเดิม)
+  // ============== HISTORY / UTILS ==============
+
   Future<void> _addWaterHistory(String mode) async {
-    // ... (ใช้โค้ดเดิม) ...
     double currentWaterLevel = 0.0;
     try {
       final snapshot = await _database.ref('devices/pump/waterLevel').once();
@@ -320,7 +455,7 @@ class _PumpPageState extends State<PumpPage> {
       debugPrint("Error adding water history to Firestore: $e");
     }
   }
-  
+
   void _clearWaterHistory() {
     showDialog(
       context: context,
@@ -371,8 +506,7 @@ class _PumpPageState extends State<PumpPage> {
     );
   }
 
-
-  // ---------- UI (มีการแก้ไข Switch ใน Card) ----------
+  // ====================== UI ======================
 
   @override
   Widget build(BuildContext context) {
@@ -523,7 +657,9 @@ class _PumpPageState extends State<PumpPage> {
                           : 'ปิดอยู่',
                       style: TextStyle(
                         fontSize: widget.fontSize,
-                        color: pumpOn ? Colors.teal.shade700 : Colors.grey.shade700,
+                        color: pumpOn
+                            ? Colors.teal.shade700
+                            : Colors.grey.shade700,
                         fontFamily: 'Prompt',
                       ),
                     ),
@@ -532,7 +668,6 @@ class _PumpPageState extends State<PumpPage> {
               ),
               Switch(
                 value: pumpOn,
-                // **แก้ไข:** เปลี่ยน activeThumbColor เป็น activeColor
                 activeColor: Colors.green,
                 onChanged: togglePump,
               ),
@@ -576,7 +711,9 @@ class _PumpPageState extends State<PumpPage> {
                           ),
                         ),
                         Text(
-                          auto ? 'ควบคุมปั๊มตามค่าความชื้น' : 'ควบคุมด้วยมือเท่านั้น',
+                          auto
+                              ? 'ควบคุมปั๊มตามสภาพอากาศ + เซนเซอร์'
+                              : 'ควบคุมด้วยมือเท่านั้น',
                           style: TextStyle(
                             fontSize: widget.fontSize,
                             color: Colors.grey.shade700,
@@ -588,7 +725,6 @@ class _PumpPageState extends State<PumpPage> {
                   ),
                   Switch(
                     value: auto,
-                    // **แก้ไข:** เปลี่ยน activeThumbColor เป็น activeColor
                     activeColor: Colors.green,
                     onChanged: (_) => toggleAuto(),
                   ),
@@ -598,6 +734,14 @@ class _PumpPageState extends State<PumpPage> {
                 const SizedBox(height: 10),
                 Divider(color: Colors.green.shade200),
                 const SizedBox(height: 5),
+                Text(
+                  '',
+                  style: TextStyle(
+                    fontSize: widget.fontSize - 2,
+                    color: Colors.green.shade700,
+                    fontFamily: 'Prompt',
+                  ),
+                ),
               ],
             ],
           ),
@@ -634,7 +778,9 @@ class _PumpPageState extends State<PumpPage> {
                     ),
                   ),
                   Text(
-                    floatSwitchOn ? 'ON (น้ำเต็ม/กำลังสูง)' : 'OFF (น้ำลด/กำลังต่ำ)',
+                    floatSwitchOn
+                        ? 'ON (น้ำเต็ม/กำลังสูง)'
+                        : 'OFF (น้ำลด/กำลังต่ำ)',
                     style: TextStyle(
                       fontSize: widget.fontSize,
                       color: Colors.grey.shade700,
@@ -647,8 +793,7 @@ class _PumpPageState extends State<PumpPage> {
             IgnorePointer(
               child: Switch(
                 value: floatSwitchOn,
-                // **แก้ไข:** เปลี่ยน activeThumbColor เป็น activeColor
-                activeColor: Colors.blue, // ใช้สีฟ้าให้เข้ากับน้ำ
+                activeColor: Colors.blue,
                 onChanged: (_) {},
               ),
             ),
