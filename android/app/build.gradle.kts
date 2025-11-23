@@ -28,7 +28,7 @@ android {
         // **********************************************
         // ********** ส่วนที่แก้ไขให้ถูกต้อง *************
         // **********************************************
-        minSdk = flutter.minSdkVersion // แก้จาก flutter.minSdkVersion เป็น 23 โดยตรง
+        minSdk = 23
         
         targetSdk = flutter.targetSdkVersion
         versionCode = flutter.versionCode
